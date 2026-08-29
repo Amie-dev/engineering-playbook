@@ -1,0 +1,27 @@
+{
+  "name": "agentic-ai-foundations",
+  "version": "1.0.0",
+  "description": "Foundation files for Agentic AI — runnable JS notes covering LLMs, prompting, RAG, and more.",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "01": "node 01-how-llms-work.js",
+    "02": "node 02-tokens-context-windows-costs.js",
+    "03": "node 03-prompt-engineering-basics.js",
+    "04": "node 04-prompt-engineering-advanced.js",
+    "05": "node 05-prompt-chaining.js",
+    "06": "node 06-embeddings-deep-dive.js",
+    "07": "node 07-vector-databases.js",
+    "08": "node 08-chunking-strategies.js",
+    "09": "node 09-rag-architecture.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "openai": "^4.73.0",
+    "dotenv": "^16.4.5",
+    "chromadb": "^1.9.2",
+    "mongodb": "^6.11.0",
+    "tiktoken": "^1.0.17",
+    "zod": "^3.23.8"
+  }
+}

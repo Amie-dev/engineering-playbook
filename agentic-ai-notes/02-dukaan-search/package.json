@@ -1,0 +1,19 @@
+{
+  "name": "dukaan-search",
+  "version": "1.0.0",
+  "description": "Semantic product search using embeddings - DukaanDhundho",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "benchmark": "node src/embeddings/benchmark.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "chromadb": "^1.9.2",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mongodb": "^6.12.0"
+  }
+}

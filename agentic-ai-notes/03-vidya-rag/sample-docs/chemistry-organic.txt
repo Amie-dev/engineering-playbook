@@ -1,0 +1,67 @@
+CHAPTER: Organic Chemistry - Hydrocarbons
+
+TOPIC: Classification of Hydrocarbons
+Hydrocarbons are compounds containing only carbon and hydrogen atoms.
+
+Types:
+1. Saturated hydrocarbons (Alkanes): Only single bonds between carbon atoms. General formula: CnH2n+2. Example: Methane (CH4), Ethane (C2H6).
+2. Unsaturated hydrocarbons:
+   a. Alkenes: Contain at least one carbon-carbon double bond. General formula: CnH2n. Example: Ethene (C2H4).
+   b. Alkynes: Contain at least one carbon-carbon triple bond. General formula: CnH2n-2. Example: Ethyne (C2H2).
+3. Aromatic hydrocarbons: Contain a benzene ring. Example: Benzene (C6H6), Toluene.
+
+TOPIC: IUPAC Nomenclature
+Steps for naming organic compounds:
+1. Find the longest continuous carbon chain (parent chain).
+2. Number the carbons starting from the end nearest to the first branch.
+3. Name each substituent with its position number.
+4. Use prefixes: meth (1C), eth (2C), prop (3C), but (4C), pent (5C), hex (6C).
+5. Use suffixes: -ane (single bond), -ene (double bond), -yne (triple bond).
+
+Example: CH3-CH(CH3)-CH2-CH3 is 2-methylbutane, not 3-methylbutane. Always use the lowest locant.
+
+JEE Important: For compounds with both double and triple bonds, the numbering should give the lowest set of locants. The suffix becomes -en-yne.
+
+TOPIC: Isomerism
+Isomers are compounds with the same molecular formula but different structural arrangements.
+
+Types of structural isomerism:
+1. Chain isomerism: Different carbon chain arrangements. Butane and isobutane (2-methylpropane) are chain isomers.
+2. Position isomerism: Same functional group at different positions. 1-propanol and 2-propanol.
+3. Functional group isomerism: Different functional groups. Ethanol (C2H5OH) and dimethyl ether (CH3OCH3).
+
+TOPIC: Chemical Reactions of Alkanes
+1. Combustion: CH4 + 2O2 -> CO2 + 2H2O + energy. Complete combustion gives CO2 and water.
+2. Substitution: In presence of UV light, hydrogen atoms are replaced by halogens.
+   CH4 + Cl2 -> CH3Cl + HCl (in sunlight)
+   This follows a free radical mechanism: initiation, propagation, termination.
+3. Pyrolysis (Cracking): Breaking larger alkanes into smaller ones at high temperature.
+
+TOPIC: Chemical Reactions of Alkenes
+1. Addition reactions (characteristic of unsaturated compounds):
+   a. Hydrogenation: CH2=CH2 + H2 -> CH3-CH3 (using Ni catalyst)
+   b. Halogenation: CH2=CH2 + Br2 -> CH2Br-CH2Br (decolorizes bromine water - test for unsaturation)
+   c. Hydrohalogenation: CH2=CH2 + HBr -> CH3-CH2Br
+
+2. Markovnikov's Rule: When HX adds to an unsaturated bond, H goes to the carbon with more hydrogens.
+   CH3-CH=CH2 + HBr -> CH3-CHBr-CH3 (not CH3-CH2-CH2Br)
+
+   Anti-Markovnikov addition (Peroxide effect): In presence of peroxide, Br goes to the carbon with more hydrogens.
+
+NEET Tip: Markovnikov's rule is frequently tested. Remember - "the rich get richer" - hydrogen goes to the carbon that already has more hydrogens.
+
+TOPIC: Chemical Reactions of Alkynes
+1. Alkynes undergo addition reactions similar to alkenes but can add two molecules.
+2. Acidic nature of terminal alkynes: Terminal alkynes (with H on triple-bond carbon) react with sodium metal or ammoniacal silver nitrate.
+   HC triple bond CH + Na -> HC triple bond CNa + 1/2 H2
+   This is because the sp hybridized carbon is more electronegative.
+
+TOPIC: Benzene and Aromaticity
+Benzene has a planar hexagonal structure with all C-C bonds of equal length (1.39 Angstrom).
+Huckel's rule: A compound is aromatic if it has (4n+2) pi electrons in a planar cyclic arrangement.
+Benzene has 6 pi electrons (n=1), making it aromatic.
+
+Reactions of benzene are mainly electrophilic substitution (not addition, to preserve aromaticity):
+1. Nitration: C6H6 + HNO3 -> C6H5NO2 + H2O (using H2SO4 catalyst)
+2. Halogenation: C6H6 + Cl2 -> C6H5Cl + HCl (using AlCl3 catalyst)
+3. Friedel-Crafts alkylation: C6H6 + CH3Cl -> C6H5CH3 + HCl (using AlCl3)

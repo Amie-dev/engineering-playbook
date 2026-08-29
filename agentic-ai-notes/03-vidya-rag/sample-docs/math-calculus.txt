@@ -1,0 +1,108 @@
+CHAPTER: Differential Calculus
+
+TOPIC: Limits
+The limit of a function f(x) as x approaches a value 'a' is the value that f(x) gets closer to as x gets closer to 'a'.
+
+Written as: lim(x->a) f(x) = L
+
+Important limits to remember:
+1. lim(x->0) sin(x)/x = 1
+2. lim(x->0) (1 - cos(x))/x = 0
+3. lim(x->0) tan(x)/x = 1
+4. lim(x->0) (e^x - 1)/x = 1
+5. lim(x->0) log(1+x)/x = 1
+
+L'Hopital's Rule: If lim(x->a) f(x)/g(x) gives 0/0 or infinity/infinity, then the limit equals lim(x->a) f'(x)/g'(x).
+
+Example: lim(x->0) sin(x)/x = lim(x->0) cos(x)/1 = 1 (using L'Hopital's rule).
+
+JEE Tip: Sandwich theorem (squeeze theorem) is useful when direct evaluation and L'Hopital both seem difficult.
+
+TOPIC: Continuity
+A function f(x) is continuous at x = a if:
+1. f(a) is defined
+2. lim(x->a) f(x) exists
+3. lim(x->a) f(x) = f(a)
+
+Types of discontinuity:
+1. Removable: Limit exists but does not equal f(a). Can be fixed by redefining f(a).
+2. Jump: Left-hand limit and right-hand limit both exist but are not equal.
+3. Infinite: Function approaches infinity at the point.
+
+Important: Every differentiable function is continuous, but not every continuous function is differentiable. Example: f(x) = |x| is continuous at x=0 but not differentiable there.
+
+TOPIC: Derivatives
+The derivative of f(x) is defined as: f'(x) = lim(h->0) [f(x+h) - f(x)] / h
+
+This represents the instantaneous rate of change, or the slope of the tangent line at a point.
+
+Basic derivatives:
+1. d/dx (x^n) = n * x^(n-1) (Power Rule)
+2. d/dx (sin x) = cos x
+3. d/dx (cos x) = -sin x
+4. d/dx (tan x) = sec^2 x
+5. d/dx (e^x) = e^x
+6. d/dx (ln x) = 1/x
+
+Rules of differentiation:
+1. Sum rule: (f + g)' = f' + g'
+2. Product rule: (f * g)' = f' * g + f * g'
+3. Quotient rule: (f/g)' = (f' * g - f * g') / g^2
+4. Chain rule: d/dx [f(g(x))] = f'(g(x)) * g'(x)
+
+Example: Find d/dx [sin(x^2)].
+Using chain rule: cos(x^2) * 2x = 2x * cos(x^2)
+
+TOPIC: Applications of Derivatives
+1. Finding maxima and minima:
+   - Find f'(x) = 0 (critical points)
+   - If f''(x) > 0 at critical point, it is a minimum
+   - If f''(x) < 0 at critical point, it is a maximum
+
+   Example: Find the maximum value of f(x) = -x^2 + 4x + 5.
+   f'(x) = -2x + 4 = 0, so x = 2
+   f''(x) = -2 < 0, so x = 2 is a maximum
+   f(2) = -4 + 8 + 5 = 9
+
+2. Rate of change problems:
+   If a balloon's radius increases at 2 cm/s, find the rate of volume increase when r = 5 cm.
+   V = (4/3) * pi * r^3
+   dV/dt = 4 * pi * r^2 * dr/dt = 4 * pi * 25 * 2 = 200 * pi cm^3/s
+
+TOPIC: Integral Calculus
+
+Integration is the reverse process of differentiation. If F'(x) = f(x), then the integral of f(x) dx = F(x) + C.
+
+Basic integrals:
+1. integral of x^n dx = x^(n+1)/(n+1) + C (n is not equal to -1)
+2. integral of sin x dx = -cos x + C
+3. integral of cos x dx = sin x + C
+4. integral of e^x dx = e^x + C
+5. integral of 1/x dx = ln|x| + C
+
+Integration techniques:
+1. Substitution: For integrals of the form integral of f(g(x)) * g'(x) dx
+   Let u = g(x), then du = g'(x) dx
+   Example: integral of 2x * cos(x^2) dx. Let u = x^2, du = 2x dx.
+   = integral of cos(u) du = sin(u) + C = sin(x^2) + C
+
+2. Integration by parts: integral of u dv = uv - integral of v du
+   Use ILATE rule to choose u: Inverse trig, Log, Algebraic, Trig, Exponential.
+   Example: integral of x * e^x dx. Let u = x, dv = e^x dx.
+   = x * e^x - integral of e^x dx = x * e^x - e^x + C = e^x(x - 1) + C
+
+TOPIC: Definite Integrals
+The definite integral from a to b of f(x) dx represents the area under the curve f(x) from x=a to x=b.
+
+Fundamental Theorem of Calculus:
+integral from a to b of f(x) dx = F(b) - F(a), where F is the antiderivative of f.
+
+Properties:
+1. integral from a to b of f(x) dx = -integral from b to a of f(x) dx
+2. integral from a to b of f(x) dx = integral from a to c of f(x) dx + integral from c to b of f(x) dx
+3. If f(x) is even: integral from -a to a of f(x) dx = 2 * integral from 0 to a of f(x) dx
+4. If f(x) is odd: integral from -a to a of f(x) dx = 0
+
+JEE Important: King's property - integral from 0 to a of f(x) dx = integral from 0 to a of f(a-x) dx. This simplifies many definite integrals.
+
+NEET Tip: Focus on basic integration formulas and simple applications like area under curves. JEE requires mastery of all techniques.

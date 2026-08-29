@@ -1,0 +1,9 @@
+express-notes/node_modules
+node_modules
+agentic-ai-notes/node_modules
+./express-notes/node_modules
+*/node_modules
+*/.DS_Store
+.DS_Store
+.env
+inst.md

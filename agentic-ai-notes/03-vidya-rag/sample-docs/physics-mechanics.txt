@@ -1,0 +1,54 @@
+CHAPTER: Newton's Laws of Motion
+
+TOPIC: First Law of Motion (Law of Inertia)
+An object at rest stays at rest, and an object in motion stays in motion with the same speed and direction, unless acted upon by an unbalanced force. This is also known as the law of inertia.
+
+Example: A passenger standing in a bus lurches forward when the bus suddenly stops. The lower body stops with the bus, but the upper body continues moving forward due to inertia.
+
+Inertia depends on mass. A heavier object has more inertia and is harder to set in motion or stop. This is why it is easier to push an empty cart than a loaded one.
+
+TOPIC: Second Law of Motion
+The rate of change of momentum of an object is directly proportional to the applied force and takes place in the direction of the force.
+
+Mathematical form: F = ma, where F is force in Newtons, m is mass in kg, and a is acceleration in m/s squared.
+
+Example: A cricket ball of mass 0.15 kg is hit by a bat. If the ball changes velocity from 20 m/s to -30 m/s in 0.01 seconds, the force applied is F = 0.15 * (50/0.01) = 750 N.
+
+The concept of impulse is derived from the second law. Impulse = Force * time = change in momentum. This is why a fielder pulls his hands back while catching a fast ball, to increase the time and reduce the force on his hands.
+
+TOPIC: Third Law of Motion
+For every action, there is an equal and opposite reaction. Action and reaction forces act on different bodies, not on the same body.
+
+Example: When you walk, your foot pushes the ground backward (action), and the ground pushes your foot forward (reaction). Without friction, you would not be able to walk, as the ground could not provide the reaction force.
+
+Rocket propulsion works on the third law. Hot gases are expelled downward at high speed (action), and the rocket moves upward (reaction).
+
+TOPIC: Conservation of Linear Momentum
+When no external force acts on a system, the total momentum of the system remains constant. This is a direct consequence of Newton's third law.
+
+Mathematical form: m1*v1 + m2*v2 = m1*v1' + m2*v2' (for two objects)
+
+Example: A gun of mass 4 kg fires a bullet of mass 50 g at 100 m/s. The recoil velocity of the gun is: 4*v + 0.05*100 = 0, so v = -1.25 m/s. The negative sign indicates the gun moves in the opposite direction.
+
+TOPIC: Friction
+Friction is the force that opposes relative motion between two surfaces in contact.
+
+Types of friction:
+1. Static friction: Prevents motion from starting. Has a maximum value called limiting friction.
+2. Kinetic friction: Opposes motion of a moving object. Always less than limiting static friction.
+3. Rolling friction: Much smaller than sliding friction. This is why wheels are preferred over dragging.
+
+The coefficient of friction (mu) is the ratio of friction force to normal force: f = mu * N.
+
+JEE Important: Problems on friction often involve inclined planes. The angle at which an object just begins to slide is called the angle of repose: tan(theta) = mu.
+
+TOPIC: Circular Motion
+An object moving in a circle at constant speed has acceleration directed toward the center. This is centripetal acceleration: a = v squared / r.
+
+The centripetal force is not a new force. It is provided by tension, gravity, friction, or normal force depending on the situation.
+
+Example: A car turning on a flat road uses friction as centripetal force. Maximum safe speed: v = sqrt(mu * g * r).
+
+On a banked road, the normal force provides the centripetal component. Ideal banking angle: tan(theta) = v squared / (r * g).
+
+NEET Tip: For a vertical circular motion, the minimum speed at the top of the loop is v = sqrt(g * r) to maintain contact.

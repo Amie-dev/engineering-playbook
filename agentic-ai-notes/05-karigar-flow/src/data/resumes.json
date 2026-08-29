@@ -1,0 +1,50 @@
+[
+  {
+    "id": "RES-001",
+    "name": "Arjun Mehta",
+    "email": "arjun@example.com",
+    "phone": "+91-9876543210",
+    "location": "Delhi",
+    "experience": "5 years",
+    "summary": "Full stack developer with 5 years of experience building React and Node.js applications. Worked at two startups in fintech. Strong in TypeScript and MongoDB. Built a real-time trading dashboard used by 10K+ users.",
+    "skills": ["react", "node.js", "typescript", "mongodb", "express", "aws", "docker"],
+    "education": "B.Tech CS, DTU Delhi",
+    "previousRoles": ["Frontend Developer at FinEdge", "Full Stack Developer at TradeVault"]
+  },
+  {
+    "id": "RES-002",
+    "name": "Kavita Iyer",
+    "email": "kavita@example.com",
+    "phone": "+91-9123456789",
+    "location": "Bangalore",
+    "experience": "4 years",
+    "summary": "ML engineer specializing in NLP and recommendation systems. Experience with PyTorch, deployed 3 production models. Published paper on transformer fine-tuning for Indian languages.",
+    "skills": ["python", "pytorch", "tensorflow", "nlp", "docker", "mlops", "sql"],
+    "education": "M.Tech AI, IIT Bangalore",
+    "previousRoles": ["ML Intern at Amazon", "ML Engineer at LingualAI"]
+  },
+  {
+    "id": "RES-003",
+    "name": "Rohan Singh",
+    "email": "rohan@example.com",
+    "phone": "+91-9988776655",
+    "location": "Delhi",
+    "experience": "2 years",
+    "summary": "Junior frontend developer. Built portfolio websites and small React apps. Learning TypeScript and backend development. Contributed to 2 open source projects.",
+    "skills": ["react", "javascript", "css", "html", "git", "tailwind"],
+    "education": "BCA, Jamia Millia Islamia",
+    "previousRoles": ["Intern at WebCraft Studios"]
+  },
+  {
+    "id": "RES-004",
+    "name": "Deepika Nair",
+    "email": "deepika@example.com",
+    "phone": "+91-9871234560",
+    "location": "Hyderabad",
+    "experience": "6 years",
+    "summary": "DevOps specialist with strong AWS and Kubernetes experience. Migrated monolith to microservices at previous company. Certified AWS Solutions Architect.",
+    "skills": ["kubernetes", "docker", "aws", "terraform", "ci/cd", "linux", "python"],
+    "education": "B.Tech IT, JNTU Hyderabad",
+    "previousRoles": ["SysAdmin at HostKaro", "DevOps Engineer at ScaleUp Tech"]
+  }
+]

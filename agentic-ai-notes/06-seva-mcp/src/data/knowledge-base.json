@@ -1,0 +1,66 @@
+[
+  {
+    "id": "KB-001",
+    "title": "Ration Card Application",
+    "category": "food-security",
+    "content": "Apply for a new ration card through the National Food Security Portal. Requirements: Aadhaar card, address proof, income certificate. Process: Visit nearest CSC or apply online at nfsa.gov.in. Timeline: 15-30 working days.",
+    "eligibility": "All Indian citizens below poverty line or with income under 2.5 LPA",
+    "department": "Food and Civil Supplies"
+  },
+  {
+    "id": "KB-002",
+    "title": "PM Kisan Samman Nidhi",
+    "category": "agriculture",
+    "content": "Direct income support of Rs 6000 per year to farmer families in three installments of Rs 2000. Register at pmkisan.gov.in with Aadhaar, bank account, and land records. Status can be checked online with Aadhaar number.",
+    "eligibility": "Small and marginal farmer families with cultivable land",
+    "department": "Agriculture Ministry"
+  },
+  {
+    "id": "KB-003",
+    "title": "Ayushman Bharat Health Card",
+    "category": "health",
+    "content": "Free health insurance cover of Rs 5 lakh per family per year. Covers hospitalization, pre and post treatment. Check eligibility at pmjay.gov.in or call 14555. Card generated at empaneled hospitals or CSC centers.",
+    "eligibility": "Bottom 40% vulnerable families as per SECC data",
+    "department": "National Health Authority"
+  },
+  {
+    "id": "KB-004",
+    "title": "Birth Certificate",
+    "category": "civil-registration",
+    "content": "Register birth within 21 days at local municipal office. Required: hospital discharge summary, parents Aadhaar, marriage certificate. Late registration (after 21 days) requires magistrate approval. Apply online through state CRS portal.",
+    "eligibility": "All births in India must be registered",
+    "department": "Registrar General of India"
+  },
+  {
+    "id": "KB-005",
+    "title": "Widow Pension Scheme",
+    "category": "social-welfare",
+    "content": "Monthly pension of Rs 500-1500 for widows. Apply through District Social Welfare Office with death certificate of spouse, age proof, income certificate, and bank passbook. Processing time: 30-45 days.",
+    "eligibility": "Widows aged 18-59 with annual income below Rs 2 lakh",
+    "department": "Social Welfare Department"
+  },
+  {
+    "id": "KB-006",
+    "title": "Caste Certificate",
+    "category": "civil-registration",
+    "content": "Apply at Tehsildar office or online through state service portal. Required documents: school leaving certificate, parents caste certificate, affidavit. Verification through local patwari. Timeline: 15-21 days.",
+    "eligibility": "Citizens belonging to SC/ST/OBC categories",
+    "department": "Revenue Department"
+  },
+  {
+    "id": "KB-007",
+    "title": "PM Awas Yojana (Urban)",
+    "category": "housing",
+    "content": "Affordable housing subsidy under PMAY-Urban. Interest subsidy of 3-6.5% on home loans. Apply through local municipal body or online at pmaymis.gov.in. Beneficiary selection through survey data.",
+    "eligibility": "EWS/LIG families with no pucca house, annual income up to 18 LPA depending on category",
+    "department": "Ministry of Housing and Urban Affairs"
+  },
+  {
+    "id": "KB-008",
+    "title": "Scholarship for SC/ST Students",
+    "category": "education",
+    "content": "Post-matric scholarship covers tuition fees, maintenance allowance, and study tour charges. Apply through National Scholarship Portal (scholarships.gov.in). Renewal required each year with marksheet.",
+    "eligibility": "SC/ST students in post-matric courses with family income below 2.5 LPA",
+    "department": "Ministry of Social Justice"
+  }
+]

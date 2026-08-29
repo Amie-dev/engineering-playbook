@@ -1,0 +1,156 @@
+[
+  {
+    "id": "prod-001",
+    "name": "Royal Basmati Rice 5kg",
+    "category": "Grocery",
+    "price": 599,
+    "description": "Premium long-grain basmati rice from the foothills of Himalayas. Aged for 2 years for extra length and aroma. Perfect for biryani, pulao, and everyday meals. Each grain cooks separate and fluffy."
+  },
+  {
+    "id": "prod-002",
+    "name": "Prestige Induction Cooktop",
+    "category": "Kitchen Appliances",
+    "price": 2499,
+    "description": "1600W induction cooktop with push-button controls. Features anti-magnetic wall technology and automatic voltage regulator. Compatible with all induction-ready cookware. Indian menu preset options for roti, dosa, and curry."
+  },
+  {
+    "id": "prod-003",
+    "name": "Fabindia Cotton Kurta Set",
+    "category": "Clothing",
+    "price": 1899,
+    "description": "Hand-block printed cotton kurta with matching palazzo pants. Traditional Rajasthani design using natural dyes. Comfortable breathable fabric ideal for Indian summers. Available in sizes S to XXL."
+  },
+  {
+    "id": "prod-004",
+    "name": "boAt Rockerz 450 Headphones",
+    "category": "Electronics",
+    "price": 1299,
+    "description": "Wireless bluetooth headphones with 40mm drivers for deep bass. 15-hour battery life with quick charge support. Padded ear cushions for comfort during long listening sessions. Built-in microphone for calls."
+  },
+  {
+    "id": "prod-005",
+    "name": "Himalaya Neem Face Wash",
+    "category": "Beauty",
+    "price": 199,
+    "description": "Soap-free herbal face wash with neem and turmeric extracts. Controls pimples and keeps skin clear. Suitable for oily to combination skin. Gentle daily use formula with no harmful chemicals."
+  },
+  {
+    "id": "prod-006",
+    "name": "Cello Stainless Steel Water Bottle 1L",
+    "category": "Home",
+    "price": 449,
+    "description": "Double-walled vacuum insulated steel bottle. Keeps water cold for 24 hours and hot for 12 hours. Leak-proof lid with easy carry handle. BPA free and food-grade stainless steel."
+  },
+  {
+    "id": "prod-007",
+    "name": "Amul Ghee 1L Tin",
+    "category": "Grocery",
+    "price": 649,
+    "description": "Pure cow milk ghee made from fresh cream using traditional method. Rich golden color with authentic granular texture. Ideal for cooking, tadka, sweets, and paranthas. Source of good fats and vitamins."
+  },
+  {
+    "id": "prod-008",
+    "name": "Wildcraft Camping Backpack 45L",
+    "category": "Travel",
+    "price": 2999,
+    "description": "Large capacity trekking backpack with rain cover. Padded hip belt and shoulder straps for weight distribution. Multiple compartments with laptop sleeve. Water-resistant fabric suitable for Himalayan treks."
+  },
+  {
+    "id": "prod-009",
+    "name": "Milton Thermosteel Flask 500ml",
+    "category": "Home",
+    "price": 699,
+    "description": "Stainless steel vacuum flask that keeps tea hot for 24 hours. Sleek design fits in car cup holders. Easy pour lid with one-hand operation. Rust-proof and durable construction."
+  },
+  {
+    "id": "prod-010",
+    "name": "Havells Ceiling Fan 1200mm",
+    "category": "Home Appliances",
+    "price": 1599,
+    "description": "Energy efficient BLDC motor ceiling fan with remote control. Runs on just 28 watts saving 65% electricity. Silent operation with 3-year warranty. Available in brown, white, and metallic finishes."
+  },
+  {
+    "id": "prod-011",
+    "name": "Tata Sampann Turmeric Powder 500g",
+    "category": "Grocery",
+    "price": 149,
+    "description": "Unpolished turmeric powder with natural oils retained. High curcumin content for health benefits. Sourced from Salem district known for premium turmeric. No added colors or artificial ingredients."
+  },
+  {
+    "id": "prod-012",
+    "name": "Noise ColorFit Pro 5 Smartwatch",
+    "category": "Electronics",
+    "price": 3499,
+    "description": "AMOLED display smartwatch with heart rate and SpO2 monitoring. 100 plus sports modes including cricket and kabaddi. 7-day battery life with fast charging. Hindi and English notification support."
+  },
+  {
+    "id": "prod-013",
+    "name": "Godrej Aer Room Freshener",
+    "category": "Home",
+    "price": 249,
+    "description": "Long-lasting room freshener with twist and gel technology. Lasts up to 60 days. Available in fragrances inspired by Indian flowers like mogra, rajnigandha. No gas propellant, safe for home use."
+  },
+  {
+    "id": "prod-014",
+    "name": "Bajaj Mixer Grinder 750W",
+    "category": "Kitchen Appliances",
+    "price": 3299,
+    "description": "Powerful mixer grinder with 3 stainless steel jars. Ideal for making chutneys, masala grinding, and lassi. Overload protection and shock-proof body. Suitable for heavy daily Indian cooking needs."
+  },
+  {
+    "id": "prod-015",
+    "name": "Patanjali Dant Kanti Toothpaste",
+    "category": "Personal Care",
+    "price": 89,
+    "description": "Ayurvedic toothpaste with 26 herbs and natural ingredients. Fights cavities, bad breath, and gum problems. Contains akarkara, babool, and neem extracts. No fluoride or harmful chemicals."
+  },
+  {
+    "id": "prod-016",
+    "name": "Urban Ladder Study Desk",
+    "category": "Furniture",
+    "price": 8999,
+    "description": "Solid sheesham wood study desk with cable management holes. Compact design suitable for small Indian apartments. Two drawers with soft-close mechanism. Natural teak finish that ages beautifully."
+  },
+  {
+    "id": "prod-017",
+    "name": "Pigeon Stainless Steel Pressure Cooker 5L",
+    "category": "Kitchen",
+    "price": 1299,
+    "description": "Heavy-duty stainless steel pressure cooker compatible with gas and induction. Inner lid design for better pressure seal. Cooks dal, rice, and meat quickly and evenly. ISI certified safety valve."
+  },
+  {
+    "id": "prod-018",
+    "name": "Jockey Cotton Innerwear Pack of 3",
+    "category": "Clothing",
+    "price": 899,
+    "description": "Premium combed cotton briefs with stay fresh technology. Comfortable elastic waistband that does not roll. Designed for Indian body types with proper sizing. Retains shape after multiple washes."
+  },
+  {
+    "id": "prod-019",
+    "name": "Dabur Honey 1kg",
+    "category": "Grocery",
+    "price": 399,
+    "description": "100 percent pure honey sourced from wild bee farms. NMR tested for purity guarantee. Rich in antioxidants and natural enzymes. Great with warm water, on toast, or in cooking."
+  },
+  {
+    "id": "prod-020",
+    "name": "Syska LED Bulb 9W Pack of 6",
+    "category": "Home",
+    "price": 499,
+    "description": "Energy saving LED bulbs with 25000 hours lifespan. B22 base fitting common in Indian homes. Bright white light at 900 lumens. Save up to 88 percent electricity compared to regular bulbs."
+  },
+  {
+    "id": "prod-021",
+    "name": "PhonePe SmartSpeaker",
+    "category": "Electronics",
+    "price": 499,
+    "description": "Payment confirmation speaker that announces UPI payments in Hindi and English. Connects via bluetooth to your phone. Loud and clear audio that works in noisy shop environments. Long battery life for all-day use."
+  },
+  {
+    "id": "prod-022",
+    "name": "Bikaneri Bhujia 1kg Pack",
+    "category": "Snacks",
+    "price": 299,
+    "description": "Authentic Rajasthani bhujia namkeen made from moth dal and besan. Crispy spicy snack perfect with tea. Traditional recipe from Bikaner with no preservatives. Packed in airtight container for freshness."
+  }
+]

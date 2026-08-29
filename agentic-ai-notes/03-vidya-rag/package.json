@@ -1,0 +1,19 @@
+{
+  "name": "vidya-rag",
+  "version": "1.0.0",
+  "description": "RAG-based AI tutor for JEE/NEET - VidyaPath",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "ingest": "node scripts/ingest.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.8",
+    "chromadb": "^1.9.2",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.0",
+    "openai": "^4.77.0"
+  }
+}

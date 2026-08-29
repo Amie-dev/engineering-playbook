@@ -1,0 +1,90 @@
+[
+  {
+    "id": "JOB-001",
+    "title": "Senior React Developer",
+    "company": "TechNova Solutions",
+    "location": "Delhi",
+    "type": "full-time",
+    "salary": "18-25 LPA",
+    "skills": ["react", "typescript", "node.js", "graphql", "aws"],
+    "experience": "4-7 years",
+    "description": "Build and maintain large-scale React applications for fintech clients."
+  },
+  {
+    "id": "JOB-002",
+    "title": "Python ML Engineer",
+    "company": "DataMind AI",
+    "location": "Bangalore",
+    "type": "full-time",
+    "salary": "20-30 LPA",
+    "skills": ["python", "pytorch", "tensorflow", "mlops", "docker"],
+    "experience": "3-6 years",
+    "description": "Design and deploy ML models for recommendation systems."
+  },
+  {
+    "id": "JOB-003",
+    "title": "Full Stack Developer",
+    "company": "BuildKar",
+    "location": "Delhi",
+    "type": "full-time",
+    "salary": "12-18 LPA",
+    "skills": ["react", "node.js", "mongodb", "express", "javascript"],
+    "experience": "2-5 years",
+    "description": "End-to-end development of construction management platform."
+  },
+  {
+    "id": "JOB-004",
+    "title": "DevOps Engineer",
+    "company": "CloudFirst India",
+    "location": "Hyderabad",
+    "type": "full-time",
+    "salary": "15-22 LPA",
+    "skills": ["kubernetes", "docker", "terraform", "aws", "ci/cd"],
+    "experience": "3-6 years",
+    "description": "Manage cloud infrastructure and deployment pipelines."
+  },
+  {
+    "id": "JOB-005",
+    "title": "Backend Developer",
+    "company": "PayRight",
+    "location": "Mumbai",
+    "type": "contract",
+    "salary": "14-20 LPA",
+    "skills": ["java", "spring boot", "postgresql", "kafka", "microservices"],
+    "experience": "3-5 years",
+    "description": "Build payment processing microservices handling millions of transactions."
+  },
+  {
+    "id": "JOB-006",
+    "title": "Frontend Developer",
+    "company": "DesignHub",
+    "location": "Delhi",
+    "type": "full-time",
+    "salary": "8-14 LPA",
+    "skills": ["react", "css", "javascript", "figma", "tailwind"],
+    "experience": "1-3 years",
+    "description": "Create beautiful, responsive interfaces for SaaS products."
+  },
+  {
+    "id": "JOB-007",
+    "title": "Data Engineer",
+    "company": "AnalytiQ",
+    "location": "Pune",
+    "type": "full-time",
+    "salary": "16-24 LPA",
+    "skills": ["python", "spark", "airflow", "sql", "aws"],
+    "experience": "3-6 years",
+    "description": "Build and optimize data pipelines processing terabytes daily."
+  },
+  {
+    "id": "JOB-008",
+    "title": "Mobile Developer",
+    "company": "AppCraft",
+    "location": "Delhi",
+    "type": "full-time",
+    "salary": "10-16 LPA",
+    "skills": ["react native", "typescript", "firebase", "ios", "android"],
+    "experience": "2-4 years",
+    "description": "Develop cross-platform mobile apps for healthcare clients."
+  }
+]

@@ -1,0 +1,18 @@
+{
+  "name": "jugaad-agent",
+  "version": "1.0.0",
+  "description": "SaaS business assistant with tools, memory, and guardrails - JugaadDesk, Pune",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node src/db.js"
+  },
+  "dependencies": {
+    "openai": "^4.73.0",
+    "fastify": "^5.2.0",
+    "mongodb": "^6.11.0",
+    "dotenv": "^16.4.7"
+  }
+}
