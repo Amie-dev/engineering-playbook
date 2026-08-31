@@ -1,79 +1,138 @@
-# File 21: Higher-Order Functions
+# Module 21: Higher-Order Functions — Abstraction, Decorators, and Function Composition
 
 ## Overview
-A **Higher-Order Function (HOF)** is a function that either accepts one or more functions as arguments (**callbacks**) or returns a new function as its output value.
+
+A **Higher-Order Function (HOF)** is a function that fulfills at least one of the following mathematical criteria:
+1. Takes one or more functions as input arguments (**Callback Functions**).
+2. Returns a new function as its output result (**Function Generators / Decorators**).
+
+In functional programming, HOFs enable declarative data abstractions, function decorators (`once`, `memoize`, `debounce`), and modular functional pipelines via **Function Composition (`pipe` and `compose`)**.
 
 ---
 
-## 1. Higher-Order Function Mechanics
+## 1. Higher-Order Function Architecture Taxonomy
 
 ```mermaid
-graph TD
-    HOF[Higher-Order Function] --> Accept[Accepts Callback Function as Parameter]
-    HOF --> Return[Returns New Function as Output]
+flowchart TD
+    HOF[Higher-Order Function] --> ParadigmChoice{HOF Capability}
 
-    Accept --> Example1["Array.map(fn) / Array.filter(fn) / setTimeout(fn)"]
-    Return --> Example2["Function Decorators / Currying / Middleware"]
+    ParadigmChoice -- "Takes Callbacks as Arguments" --> Callbacks["1. Callback Receivers<br/>- Array.prototype.map(cb)<br/>- Array.prototype.filter(cb)<br/>- setTimeout(cb, delay)"]
+
+    ParadigmChoice -- "Returns New Functions" --> Decorators["2. Function Decorators & Wrappers<br/>- memoize(fn)<br/>- once(fn)<br/>- debounce(fn, ms)<br/>- curried Functions"]
+
+    ParadigmChoice -- "Combines Functions" --> Composition["3. Function Pipelines<br/>- pipe(f, g, h)<br/>- compose(h, g, f)"]
 ```
 
 ---
 
-## 2. Functions Accepting Callbacks
+## 2. Function Decorators: `once()` and `memoize()`
+
+Function Decorators are HOFs that accept a target function, augment its behavior with internal closure state, and return a enhanced wrapper function.
+
+```mermaid
+flowchart TD
+    CallMemoized["memoize(expensiveFn)('arg')"] --> CheckCache{Is result in closure Cache?}
+
+    CheckCache -- Yes --> ReturnCached["Return Cached Result instantly!<br/>(Zero re-computation!)"]
+    
+    CheckCache -- No --> ExecTarget["Execute Target expensiveFn('arg')"]
+    ExecTarget --> StoreCache["Save result into Closure Cache"]
+    StoreCache --> ReturnFresh["Return Fresh Result"]
+```
 
 ```javascript
-// HOF taking a callback function
-function processNumbers(numbers, transformCallback) {
-    const results = [];
-    for (const num of numbers) {
-        results.push(transformCallback(num));
+// 1. 'once' Decorator: Guarantees a function executes AT MOST ONCE
+function once(fn) {
+  let hasExecuted = false;
+  let result;
+
+  return function (...args) {
+    if (!hasExecuted) {
+      hasExecuted = true;
+      result = fn.apply(this, args);
     }
-    return results;
+    return result; // Returns cached result on subsequent calls
+  };
 }
 
-const nums = [1, 2, 3];
-const doubled = processNumbers(nums, x => x * 2);
-console.log(doubled); // [2, 4, 6]
-```
+const initializeDatabase = once(() => {
+  console.log("Database Connection Pool Initialized!");
+  return { status: "CONNECTED", poolId: 9001 };
+});
 
----
+console.log(initializeDatabase()); // "Database Connection Pool Initialized!"
+console.log(initializeDatabase()); // (Returns cached status without re-executing!)
 
-## 3. Functions Returning Functions (Factory / Decorator Pattern)
+// 2. 'memoize' Decorator: Caches computational outputs based on input arguments
+function memoize(fn) {
+  const cache = new Map();
 
-```javascript
-// HOF returning a logger decorator function
-function createLogger(prefix) {
-    return function(message) {
-        console.log(`[${prefix}] ${message}`);
-    };
+  return function (...args) {
+    const key = JSON.stringify(args);
+    if (cache.has(key)) {
+      return cache.get(key); // Cache hit!
+    }
+
+    const result = fn.apply(this, args);
+    cache.set(key, result);
+    return result; // Cache miss
+  };
 }
 
-const infoLog = createLogger("INFO");
-const errorLog = createLogger("ERROR");
+const slowSquare = memoize((n) => {
+  console.log(`Computing square for ${n}...`);
+  return n * n;
+});
 
-infoLog("Application started successfully"); // "[INFO] Application started successfully"
-errorLog("Failed to connect to database");  // "[ERROR] Failed to connect to database"
+console.log(slowSquare(5)); // "Computing square for 5..." -> 25
+console.log(slowSquare(5)); // 25 (Instant Cache Hit!)
 ```
 
 ---
 
-## 4. Function Composition (`pipe` and `compose`)
-Function composition combines multiple functions into a single pipeline where the output of one function becomes the input of the next.
+## 3. Function Composition Pipelines: `pipe` vs. `compose`
+
+```mermaid
+flowchart LR
+    subgraph Pipe (Left-to-Right Execution)
+        Input1[Input x] --> Fn1["fn1(x)"] --> Fn2["fn2(res1)"] --> Fn3["fn3(res2)"] --> Output1[Final Result]
+    end
+
+    subgraph Compose (Right-to-Left Execution)
+        Input2[Input x] --> G3["fn3(x)"] --> G2["fn2(res3)"] --> G1["fn1(res2)"] --> Output2[Final Result]
+    end
+```
 
 ```javascript
-const add5 = x => x + 5;
-const multiply3 = x => x * 3;
+const trimString = (str) => str.trim();
+const toLowerCase = (str) => str.toLowerCase();
+const wrapInTag = (tag) => (str) => `<${tag}>${str}</${tag}>`;
 
-// Pipe (Left-to-Right execution)
-const pipe = (...fns) => x => fns.reduce((val, fn) => fn(val), x);
+// 1. Pipe Implementation (Left-to-Right execution pass)
+const pipe = (...fns) => (initialValue) =>
+  fns.reduce((acc, fn) => fn(acc), initialValue);
 
-const addThenMultiply = pipe(add5, multiply3);
-console.log(addThenMultiply(10)); // (10 + 5) * 3 = 45
+// 2. Compose Implementation (Right-to-Left execution pass)
+const compose = (...fns) => (initialValue) =>
+  fns.reduceRight((acc, fn) => fn(acc), initialValue);
+
+// Constructing a clean data transformation pipeline via pipe
+const formatEmailBadge = pipe(
+  trimString,
+  toLowerCase,
+  wrapInTag("span")
+);
+
+console.log(formatEmailBadge("   User.Email@Domain.COM  \n"));
+// Output: <span>user.email@domain.com</span>
 ```
 
 ---
 
-## Key Takeaways
-1. Higher-order functions treat functions as **first-class values**.
-2. Pass callbacks to HOFs for flexible data processing (e.g., `map`, `filter`).
-3. Return functions from HOFs to build **factories**, **decorators**, or **curried pipelines**.
-4. Use **Function Composition (`pipe`)** to build modular data transformation chains.
+## Key Production Takeaways
+
+1. **Use `memoize` for Expensive Pure Functions**: Wrap CPU-intensive mathematical or parsing functions in a memoization HOF to cache evaluation outputs.
+2. **Use `once` for Initialization Routines**: Wrap DB initialization or event listener attachment functions in a `once` HOF to prevent duplicate executions.
+3. **Use `pipe` for Clean Data Transformations**: Chain multi-step string, array, or object transformations using `pipe(...fns)` to eliminate deeply nested function call pyramids (`fn3(fn2(fn1(x)))`).
+4. **Ensure Pure Callbacks inside HOFs**: Pass pure functions (functions with no side effects) into HOFs to ensure predictable composition.
+

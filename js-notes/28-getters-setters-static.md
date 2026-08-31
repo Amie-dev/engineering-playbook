@@ -1,85 +1,140 @@
-# File 28: Getters, Setters, and Static Members
+# Module 28: Getters, Setters, and Static Members — Accessors, Static Factories, and Memory Models
 
 ## Overview
-**Getters** (`get`) and **Setters** (`set`) bind object properties to functions, allowing validation and computed values. **Static members** (`static`) belong directly to the class constructor rather than individual instances.
+
+Modern ECMAScript provides **Accessor Properties (`get` and `set`)** and **Static Members (`static`)** to structure enterprise class interfaces:
+- **Getters (`get`)**: Functions bound to a property that execute dynamically when the property is read (without parentheses).
+- **Setters (`set`)**: Functions bound to a property that intercept, validate, and sanitize value assignments.
+- **Static Members (`static`)**: Properties and methods bound directly to the Class Constructor function rather than instance payloads, ideal for utility methods and factory patterns.
 
 ---
 
-## 1. Class Features Architecture
+## 1. Accessor Property vs. Static Member Architecture
 
 ```mermaid
-graph TD
-    Class[class BankAccount] --> Get["get balance(): Computed Property Accessor"]
-    Class --> Set["set balance(val): Encapsulated Validation Interceptor"]
-    Class --> Static["static calculateInterest(): Class-Level Utility Method"]
+flowchart TD
+    Class[ES6 Class Architecture] --> Accessors["1. Accessor Properties<br/>- get prop(): Computes property on read<br/>- set prop(v): Intercepts & validates assignment"]
+    Class --> Statics["2. Static Members<br/>- static field: Shared class metadata<br/>- static method(): Factory / Utility function<br/>- Stored on Class Constructor, NOT Instance!"]
 ```
 
 ---
 
-## 2. Getters & Setters Implementation
+## 2. Getters and Setters: Accessor Descriptor Interception
+
+Under the hood, `get` and `set` define property descriptors with `[[Get]]` and `[[Set]]` internal methods rather than standard `[[Value]]` slots:
+
+```mermaid
+flowchart TD
+    subgraph Property Read (temp.fahrenheit)
+        Read["Read Property: temp.fahrenheit"] --> ExecGet["Execute 'get fahrenheit()' Method<br/>- Computes: (celsius * 9/5) + 32<br/>- Returns Computed Result"]
+    end
+
+    subgraph Property Write (temp.celsius = 30)
+        Write["Write Property: temp.celsius = 30"] --> ExecSet["Execute 'set celsius(val)' Interceptor<br/>- Validate val >= -273.15<br/>- Assigns #celsius = val"]
+    end
+```
 
 ```javascript
-class Temperature {
-    #celsius;
+class TemperatureSensor {
+  #celsius;
 
-    constructor(celsius) {
-        this.#celsius = celsius;
-    }
+  constructor(initialCelsius) {
+    this.celsius = initialCelsius; // Invokes setter validation immediately!
+  }
 
-    // Getter Accessor
-    get celsius() {
-        return this.#celsius;
-    }
+  // 1. Getter Accessor (Read computed value without parentheses)
+  get celsius() {
+    return this.#celsius;
+  }
 
-    // Computed Getter
-    get fahrenheit() {
-        return (this.#celsius * 9) / 5 + 32;
+  // 2. Setter Accessor (Intercepts and validates assignments)
+  set celsius(value) {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      throw new TypeError("Invalid temperature value");
     }
+    if (value < -273.15) {
+      throw new RangeError("Temperature below Absolute Zero (-273.15°C)!");
+    }
+    this.#celsius = value;
+  }
 
-    // Setter Interceptor with Input Validation
-    set celsius(value) {
-        if (value < -273.15) {
-            throw new RangeError("Temperature below absolute zero!");
-        }
-        this.#celsius = value;
-    }
+  // 3. Computed Getter Property
+  get fahrenheit() {
+    return (this.#celsius * 9) / 5 + 32;
+  }
 }
 
-const temp = new Temperature(25);
-console.log(temp.celsius);    // 25
-console.log(temp.fahrenheit); // 77
+const sensor = new TemperatureSensor(25);
+console.log("Celsius   :", sensor.celsius);    // 25
+console.log("Fahrenheit:", sensor.fahrenheit); // 77
 
-temp.celsius = 30; // Triggers Setter Validation!
-console.log(temp.fahrenheit); // 86
+sensor.celsius = 30; // Triggers Setter Validation!
+console.log("Updated Fahrenheit:", sensor.fahrenheit); // 86
 ```
 
 ---
 
-## 3. Static Methods & Fields
-Static properties and methods exist directly on the class constructor. They are instantiated once and cannot be called on class instances.
+## 3. Static Members & The Static Factory Pattern
+
+Static properties exist on the Class Constructor object itself, avoiding duplicate allocations across instances.
+
+```mermaid
+flowchart LR
+    subgraph Memory Heap
+        UserClass["User Class Constructor<br/>- static roles = ['ADMIN', 'DEV']<br/>- static fromJSON()"]
+        
+        UserInstance1["User Instance 1<br/>{ name: 'Anish' }"]
+        UserInstance2["User Instance 2<br/>{ name: 'Bhavna' }"]
+    end
+
+    UserInstance1 -.->|Does NOT contain static methods!| UserClass
+```
 
 ```javascript
-class MathUtils {
-    // Static Field
-    static PI = 3.14159;
+class UserProfile {
+  // ES2022 Static Fields & Private Static Fields
+  static #MAX_LOGIN_ATTEMPTS = 5;
+  static DEFAULT_ROLE = "GUEST";
 
-    // Static Utility Method
-    static square(x) {
-        return x * x;
+  constructor(name, role = UserProfile.DEFAULT_ROLE) {
+    this.name = name;
+    this.role = role;
+  }
+
+  // Static Factory Method Pattern
+  static fromJSON(jsonString) {
+    try {
+      const parsed = JSON.parse(jsonString);
+      if (!parsed.name) throw new Error("Invalid payload: missing name");
+      return new UserProfile(parsed.name, parsed.role);
+    } catch (error) {
+      throw new Error(`Failed to instantiate UserProfile: ${error.message}`);
     }
+  }
+
+  // Static Helper Utility Method
+  static compareRoles(userA, userB) {
+    return userA.role === userB.role;
+  }
 }
 
-console.log(MathUtils.PI);         // 3.14159
-console.log(MathUtils.square(4));  // 16
+// 1. Direct Static Factory Invocation
+const rawJson = '{"name": "Deepa", "role": "Architect"}';
+const userFromFactory = UserProfile.fromJSON(rawJson);
 
-const utils = new MathUtils();
-// utils.square(4); // TypeError: utils.square is not a function
+console.log("Factory Instantiated:", userFromFactory.name, userFromFactory.role);
+
+// 2. Static Members on Instance Error
+const userInstance = new UserProfile("Anita");
+// userInstance.fromJSON(rawJson); // TypeError: userInstance.fromJSON is not a function!
 ```
 
 ---
 
-## Key Takeaways
-1. Use **Getters (`get`)** for dynamic computed properties accessed without parentheses.
-2. Use **Setters (`set`)** to validate and intercept property assignments.
-3. Use **`static`** methods and fields for class-level utility functions (e.g., `MathUtils.square()`).
-4. Static members are accessed via `ClassName.member`, not instance names.
+## Key Production Takeaways
+
+1. **Use Getters for Derived / Computed Properties**: Use `get propName()` to calculate derived properties dynamically on read instead of storing duplicate stale state.
+2. **Use Setters for Data Validation & Normalization**: Intercept property assignments using `set propName(v)` to throw validation errors or sanitize strings before storing state.
+3. **Use Static Factory Methods for Complex Deserialization**: Implement `static fromJSON()` or `static fromDTO()` factory methods to decouple instance creation from raw data parsing.
+4. **Access Static Members via `ClassName.member`**: Remember that static methods belong to the Class Constructor function, not instances. Always invoke them via `ClassName.staticMethod()`.
+

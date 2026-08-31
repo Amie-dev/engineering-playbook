@@ -1,86 +1,143 @@
-# File 04: Numbers and Math
+# Module 04: Numbers and Math — IEEE 754 Binary Floats, V8 Smi Optimizations, and `Math` Utilities
 
 ## Overview
-JavaScript handles numbers using standard **IEEE 754 Double-Precision 64-bit Floating-Point** format. The built-in `Math` object provides mathematical constants and functions for rounding, exponentiation, and random number generation.
+
+JavaScript represents numbers using a single primitive data type: **IEEE 754 Double-Precision 64-bit Binary Floating-Point Numbers**.
+
+Under the hood, V8 optimizes integer operations using **Smi (Small Integer)** 31-bit signed integer pointers to avoid heap allocations.
+
+Understanding binary floating-point representation, `Number.EPSILON` comparison thresholds, rounding semantics (`floor`, `ceil`, `round`, `trunc`), secure random number generation (`crypto.getRandomValues`), and string parsing radix rules is vital for building bug-free software.
 
 ---
 
-## 1. Number Operators & Floating Point Precision
+## 1. The IEEE 754 64-Bit Binary Float Memory Layout
 
-```javascript
-// Arithmetic Operators
-console.log(10 + 3);  // 13
-console.log(10 - 3);  // 7
-console.log(10 * 3);  // 30
-console.log(10 / 3);  // 3.3333333333333335
-console.log(10 % 3);  // 1 (Remainder / Modulo)
-console.log(2 ** 4);  // 16 (Exponentiation)
-
-// IEEE 754 Precision Issue
-console.log(0.1 + 0.2); // 0.30000000000000004
-```
-
----
-
-## 2. Rounding Methods with `Math`
+Every JavaScript number is allocated across **64 bits** of memory:
 
 ```mermaid
 graph TD
-    Val[Input Float e.g. 4.7 / -4.7] --> Method{Rounding Method}
-    Method -- "Math.floor()" --> Floor[Rounds Down to Nearest Lower Integer]
-    Method -- "Math.ceil()" --> Ceil[Rounds Up to Nearest Higher Integer]
-    Method -- "Math.round()" --> Round[Rounds to Nearest Integer]
-    Method -- "Math.trunc()" --> Trunc[Strips Decimal Places Entirely]
+    subgraph IEEE 754 64-Bit Binary Floating-Point Layout
+        Sign["Sign Bit (Bit 63)<br/>1 Bit (0 = Positive, 1 = Negative)"]
+        Exponent["Biased Exponent (Bits 62 to 52)<br/>11 Bits (Range: -1022 to +1023)"]
+        Mantissa["Mantissa / Significand (Bits 51 to 0)<br/>52 Bits (Precision Fraction)"]
+    end
 ```
 
-```javascript
-console.log(Math.floor(4.9));  // 4
-console.log(Math.ceil(4.1));   // 5
-console.log(Math.round(4.5));  // 5
-console.log(Math.trunc(4.9));  // 4
+### Floating-Point Binary Imprecision (`0.1 + 0.2 !== 0.3`)
 
-// Negative rounding nuance
-console.log(Math.floor(-4.1)); // -5 (Rounds DOWN towards negative infinity)
-console.log(Math.trunc(-4.1)); // -4 (Strips fractional part)
-```
-
----
-
-## 3. Useful `Math` Utilities
+Decimals like `0.1` and `0.2` cannot be expressed as exact finite binary fractions, leading to small representation errors:
 
 ```javascript
-// Min & Max
-console.log(Math.min(10, 5, 20, 3)); // 3
-console.log(Math.max(10, 5, 20, 3)); // 20
+console.log(0.1 + 0.2);             // Output: 0.30000000000000004
+console.log(0.1 + 0.2 === 0.3);     // false!
 
-// Square Root & Absolute Values
-console.log(Math.sqrt(16)); // 4
-console.log(Math.abs(-42));  // 42
-
-// Random Number Generation (Range [min, max])
-function getRandomInt(min, max) {
-    return Math.floor(Math.random() * (max - min + 1)) + min;
+// Production Fix: Compare floating-point values using Number.EPSILON threshold
+function nearlyEqualFloats(a, b) {
+  return Math.abs(a - b) < Number.EPSILON;
 }
-console.log(getRandomInt(1, 10)); // Returns integer between 1 and 10
+
+console.log(nearlyEqualFloats(0.1 + 0.2, 0.3)); // true
 ```
 
 ---
 
-## 4. Number Parsing & Methods
-- `Number.parseInt(str, radix)`: Parses strings into integers.
-- `Number.parseFloat(str)`: Parses strings into floating-point numbers.
-- `num.toFixed(digits)`: Formats numbers to fixed decimal places (returns a string).
+## 2. V8 Numeric Architecture: Smi vs. HeapNumber
+
+```mermaid
+flowchart TD
+    JSNum[JavaScript Numeric Allocation] --> CheckSmi{Is integer inside 31-bit signed range?<br/>(-2³⁰ to +2³⁰ - 1)}
+
+    CheckSmi -- Yes --> Smi["1. Smi (Small Integer)<br/>- Stored IN-PLACE in register/stack<br/>- Zero Heap Allocation & Zero GC Overhead!"]
+
+    CheckSmi -- No --> HeapNumber["2. HeapNumber<br/>- Allocated in Memory Heap<br/>- Boxed 64-bit IEEE float pointer"]
+```
+
+---
+
+## 3. Rounding Semantics: `floor`, `ceil`, `round`, `trunc`
+
+```mermaid
+flowchart TD
+    Val[Input Floating Point Number] --> Choice{Selected Rounding Method}
+
+    Choice -- "Math.floor()" --> Floor["Rounds DOWN towards Negative Infinity<br/>(floor(4.7) = 4, floor(-4.1) = -5)"]
+    Choice -- "Math.ceil()" --> Ceil["Rounds UP towards Positive Infinity<br/>(ceil(4.1) = 5, ceil(-4.7) = -4)"]
+    Choice -- "Math.round()" --> Round["Rounds to Nearest Integer<br/>(round(4.5) = 5, round(-4.5) = -4)"]
+    Choice -- "Math.trunc()" --> Trunc["Strips Fractional Decimals Entirely<br/>(trunc(4.9) = 4, trunc(-4.9) = -4)"]
+```
 
 ```javascript
-console.log(Number.parseInt("42px", 10)); // 42
-console.log(Number.parseFloat("3.14159")); // 3.14159
-console.log((12.3456).toFixed(2));        // "12.35" (String)
+// Comparing Rounding Behavior for Positive and Negative Numbers
+const pos = 4.7;
+const neg = -4.7;
+
+console.log("Math.floor:", Math.floor(pos), Math.floor(neg)); // 4, -5
+console.log("Math.ceil :", Math.ceil(pos),  Math.ceil(neg));  // 5, -4
+console.log("Math.round:", Math.round(pos), Math.round(neg)); // 5, -5
+console.log("Math.trunc:", Math.trunc(pos), Math.trunc(neg)); // 4, -4
 ```
 
 ---
 
-## Key Takeaways
-1. All standard JS numbers are **64-bit floating-point** numbers.
-2. Use **`Math.floor()`** to round down, **`Math.ceil()`** to round up, and **`Math.trunc()`** to drop decimals.
-3. Always supply a **radix (base 10)** when calling `Number.parseInt()`.
-4. `toFixed()` returns a **string representation**; parse it back to a Number if further calculations are needed.
+## 4. `Math.random()` vs. Cryptographically Secure Random Generation
+
+```mermaid
+flowchart LR
+    subgraph Math.random (Non-Cryptographic PRNG)
+        MathRand["Math.random()<br/>- Uses xoroshiro128+ PRNG<br/>- FAST, but predictable! (DO NOT use for Security)"]
+    end
+
+    subgraph Crypto Web API (Cryptographically Secure)
+        CryptoAPI["crypto.getRandomValues()<br/>- OS-level Hardware Entropy<br/>- Cryptographically Secure (Tokens, Passwords)"]
+    end
+```
+
+```javascript
+// 1. Standard Pseudo-Random Bounded Integer Range [min, max]
+function getRandomInt(min, max) {
+  const minCeil = Math.ceil(min);
+  const maxFloor = Math.floor(max);
+  return Math.floor(Math.random() * (maxFloor - minCeil + 1)) + minCeil;
+}
+
+console.log("Random Die Roll (1-6):", getRandomInt(1, 6));
+
+// 2. Cryptographically Secure Token Generation (Node.js & Browsers)
+function generateSecureRandomByte() {
+  const byteArray = new Uint8Array(1);
+  crypto.getRandomValues(byteArray);
+  return byteArray[0];
+}
+
+console.log("Secure Random Byte (0-255):", generateSecureRandomByte());
+```
+
+---
+
+## 5. String Parsing Radix Rules & `toFixed()` Nuances
+
+```javascript
+// 1. Number Parsing with Explicit Radix Base (ALWAYS specify Radix 10!)
+console.log(Number.parseInt("42px", 10));    // 42
+console.log(Number.parseInt("010", 10));     // 10
+console.log(Number.parseFloat("3.14159"));  // 3.14159
+
+// 2. toFixed() Formats Decimals (Returns STRING, NOT Number!)
+const price = 19.9982;
+const formattedPrice = price.toFixed(2);
+console.log(formattedPrice, typeof formattedPrice); // "20.00", "string"
+
+// Parse formatted string back to Number if needed
+const numericPrice = Number(formattedPrice);
+console.log(numericPrice, typeof numericPrice);     // 20, "number"
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Compare Floating-Point Numbers using `Number.EPSILON`**: Never compare calculated decimal floats with `===`. Use `Math.abs(a - b) < Number.EPSILON`.
+2. **Always Pass Radix 10 to `Number.parseInt()`**: Always specify `10` as the second argument (`Number.parseInt(str, 10)`) to avoid legacy octal parsing bugs.
+3. **Use `crypto.getRandomValues()` for Security Tokens**: Never use `Math.random()` for auth tokens, session IDs, or password resets; use `crypto.getRandomValues()`.
+4. **Remember `toFixed()` Returns a String**: `num.toFixed(d)` outputs a formatted string. Cast it back to a Number with `Number()` if subsequent arithmetic is required.
+

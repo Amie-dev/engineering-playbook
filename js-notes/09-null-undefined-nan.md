@@ -1,73 +1,121 @@
-# File 09: Null, Undefined, and NaN
+# Module 09: Null, Undefined, and NaN — Primitive Emptiness, `NaN` Quirks, and `Object.is()`
 
 ## Overview
-`null`, `undefined`, and `NaN` are special primitive values in JavaScript representing absent, uninitialized, or invalid data states.
+
+`null`, `undefined`, and `NaN` are special primitive values in JavaScript representing absent, uninitialized, or computationally invalid data states.
+
+While developers often treat `null` and `undefined` interchangeably, they have distinct semantics under the ECMAScript specification:
+- **`undefined`**: System default representing an uninitialized binding or missing property/argument.
+- **`null`**: Explicit assignment representing deliberate absence of any object reference pointer.
+- **`NaN` (Not-a-Number)**: IEEE 754 numeric representation of an invalid or unrepresentable arithmetic calculation.
+
+Understanding their differences, detection methods (`Number.isNaN()` vs global `isNaN()`), and equality behavior with `Object.is()` is essential.
 
 ---
 
-## 1. Comparing Null vs Undefined vs NaN
+## 1. Emptiness & Computational Failure Taxonomy
 
 ```mermaid
-graph TD
-    State[Absence or Invalidity State] --> Undef["undefined: Variable declared but uninitialized"]
-    State --> NullVal["null: Intentional assignment representing empty value"]
-    State --> NaNVal["NaN: Invalid numerical computation result"]
+flowchart TD
+    State[Primitive Absence & Failure States] --> Undef["1. undefined<br/>- System default for uninitialized variables<br/>- Missing properties & parameters<br/>- typeof val === 'undefined'"]
+    
+    State --> NullVal["2. null<br/>- Explicit developer assignment of emptiness<br/>- Cleared object pointer reference<br/>- typeof val === 'object' (Historical Bug)"]
+    
+    State --> NaNVal["3. NaN (Not-a-Number)<br/>- Arithmetic calculation failure<br/>- NaN !== NaN (Self-Inequality Rule)<br/>- typeof val === 'number'"]
 ```
 
-### Characteristics Comparison
+### Detailed Feature Comparison Matrix
 
-| Value | Meaning | `typeof` Output | `Number(val)` Coercion |
+| Property / Behavior | `undefined` | `null` | `NaN` |
 | :--- | :--- | :--- | :--- |
-| **`undefined`** | System default for unassigned variables | `"undefined"` | `NaN` |
-| **`null`** | Intentional empty variable assignment | `"object"` (Bug) | `0` |
-| **`NaN`** | Computational failure / Not a Number | `"number"` | `NaN` |
+| **Semantic Meaning** | Uninitialized / Missing binding | Deliberate absence of object value | Computational math failure |
+| **`typeof` Operator Output**| `"undefined"` | `"object"` (Historical JS Bug) | `"number"` |
+| **Numeric Coercion `Number(x)`**| `NaN` | `0` | `NaN` |
+| **JSON Serialization** | Omitted from JSON output | Preserved as `null` | Converted to `null` |
+| **Default Parameter Trigger**| **Triggers default parameter** | Does NOT trigger default parameter | Does NOT trigger default parameter |
 
 ---
 
-## 2. Deep Dive: `undefined`
-`undefined` is automatically assigned by JavaScript when:
-1. A variable is declared without initialization (`let x;`).
-2. A function lacks an explicit `return` statement.
-3. An unassigned function argument is accessed.
-4. A non-existent object property is accessed.
+## 2. Deep Dive: `undefined` vs. `null` in Default Parameters
 
 ```javascript
-let unassigned;
-console.log(unassigned); // undefined
+// 1. System Scenarios Generating 'undefined'
+let declaredVar;
+console.log("Uninitialized var:", declaredVar); // undefined
 
-function noReturn() {}
-console.log(noReturn()); // undefined
+function getProductInfo(user, role) {
+  console.log("Missing Parameter 'role':", role); // undefined
+}
+getProductInfo({ name: "Rohan" });
+
+const emptyObj = {};
+console.log("Missing Property:", emptyObj.price); // undefined
+
+// 2. Default Parameters: 'undefined' Triggers Default, 'null' Does NOT!
+function renderAvatar(imageUrl = "default-avatar.png") {
+  return `Rendering ${imageUrl}`;
+}
+
+console.log(renderAvatar(undefined)); // "Rendering default-avatar.png" (Triggered default!)
+console.log(renderAvatar(null));      // "Rendering null" (NULL Bypasses default parameter!)
 ```
 
 ---
 
-## 3. Deep Dive: `null`
-`null` represents an **intentional assignment** indicating that a variable deliberately holds no object or value.
+## 3. Deep Dive: `NaN` Quirks & Verification (`Number.isNaN`)
+
+`NaN` is the only value in JavaScript that is **not equal to itself**:
 
 ```javascript
-let selectedItem = null; // Explicitly set to empty state
+console.log(NaN === NaN); // false!
+console.log(NaN == NaN);  // false!
+```
+
+### `Number.isNaN()` vs. Global `isNaN()`
+
+```mermaid
+flowchart TD
+    InputVal[Input Value to Test] --> MethodChoice{Selected Detection Function}
+
+    MethodChoice -- "global isNaN(val)" --> CoerceInput["Attempts Implicit Number(val) Coercion!<br/>- isNaN('hello') converts 'hello' to NaN -> Returns true (FALSE POSITIVE!)"]
+
+    MethodChoice -- "Number.isNaN(val)" --> StrictCheck["Performs Strict Type & Value Check!<br/>- Checks if typeof val === 'number' AND value is NaN<br/>- Number.isNaN('hello') -> Returns false (CORRECT!)"]
+```
+
+```javascript
+// Global isNaN() vs. ES6 Number.isNaN()
+const invalidMath = 0 / 0;        // NaN
+const textString = "Hello World"; // String
+
+// BAD: Legacy global isNaN() coercively converts strings!
+console.log(isNaN(textString));       // true (FALSE POSITIVE! Converts "Hello World" -> NaN)
+
+// GOOD: Robust ES6 Number.isNaN() checks without coercion!
+console.log(Number.isNaN(invalidMath)); // true (Correct!)
+console.log(Number.isNaN(textString));  // false (Correct! String is not NaN)
 ```
 
 ---
 
-## 4. Deep Dive: `NaN` (Not a Number)
-`NaN` is returned when mathematical operations fail or attempt invalid numeric conversions.
+## 4. Same-Value Equality Matrix via `Object.is()`
+
+`Object.is(a, b)` evaluates same-value equality without implicit coercion, fixing IEEE 754 float quirks for `NaN` and signed zeros (`-0` vs `+0`):
 
 ```javascript
-console.log(0 / 0);          // NaN
-console.log("hello" * 5);    // NaN
+// Object.is() Corrects Standard Equality Quirks
+console.log(Object.is(NaN, NaN));   // true (Unlike === which returns false!)
+console.log(Object.is(-0, +0));     // false (Unlike === which returns true!)
 
-// NaN Comparison Quirks
-console.log(NaN === NaN);    // false (NaN is NOT equal to itself!)
-
-// Use Number.isNaN() for reliable checking
-console.log(Number.isNaN(NaN)); // true
+console.log(Object.is(null, undefined)); // false
+console.log(Object.is(null, null));      // true
 ```
 
 ---
 
-## Key Takeaways
-1. **`undefined`** = Uninitialized by JavaScript.
-2. **`null`** = Explicitly cleared/assigned empty value by developer.
-3. **`NaN`** = Invalid math result (`NaN === NaN` returns `false`).
-4. Always use **`Number.isNaN(val)`** to verify if a computation resulted in `NaN`.
+## Key Production Takeaways
+
+1. **Use `null` for Explicit Emptiness**: Assign `null` when deliberately clearing object references or signaling an empty initial state.
+2. **Never Pass `null` expecting Default Parameters**: Default function parameters (`fn(arg = default)`) only trigger for `undefined`. Passing `null` overrides defaults.
+3. **Always Use `Number.isNaN()`**: Never use `NaN === NaN` or legacy global `isNaN()`. Always use `Number.isNaN(val)` to check for computational NaN results.
+4. **Use `Object.is()` for Accurate Same-Value Comparison**: Use `Object.is(a, b)` when comparing numbers where `NaN` or `-0` precision matters.
+

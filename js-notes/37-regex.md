@@ -1,58 +1,113 @@
-# File 37: Regular Expressions (RegExp)
+# Module 37: Regular Expressions (RegExp) — Parsing Engines, Lookaround Assertions, and ReDoS Defense
 
 ## Overview
-**Regular Expressions (RegExp)** are patterns used to match character combinations within strings. JavaScript supports regular expressions via the built-in `RegExp` class and literal `/pattern/flags` syntax.
+
+A **Regular Expression (RegExp)** is a sequence of characters that forms a search pattern for text matching, validation, extraction, and string transformation.
+
+Under the hood, JavaScript regular expressions execute on non-deterministic or deterministic finite automata engines inside V8.
+
+Understanding **RegExp Engine Flags (`g`, `i`, `m`, `u`, `s`, `y`, `d`)**, **Named Capturing Groups (`(?<name>...)`)**, **Lookahead and Lookbehind Assertions**, and mitigating **ReDoS (Regular Expression Denial of Service) Catastrophic Backtracking** is essential.
 
 ---
 
-## 1. RegExp Syntax & Flags
+## 1. RegExp Architecture & Flags Taxonomy
 
 ```mermaid
-graph TD
-    Regex["/pattern/flags"] --> Pattern[Character Classes, Anchors, Quantifiers]
-    Regex --> Flags[Flags: g, i, m, u, s, y]
+flowchart TD
+    RegexLiteral["/pattern/flags"] --> PatternElements[Pattern Components]
+    RegexLiteral --> FlagsTaxonomy[Engine Execution Flags]
 
-    Flags --> Global["g: Global match all occurrences"]
-    Flags --> Insens["i: Case-insensitive matching"]
-    Flags --> Multi["m: Multi-line matching"]
-    Flags --> Unicode["u: Unicode mode for emojis"]
+    PatternElements --> CharClasses["Character Classes: \\d, \\w, \\s, [a-z]"]
+    PatternElements --> Anchors["Anchors: ^ (Start), $ (End), \\b (Word Boundary)"]
+    PatternElements --> Quantifiers["Quantifiers: * (0+), + (1+), ? (0 or 1), {n,m}"]
+    PatternElements --> Groups["Capturing Groups: (...), (?<name>...), (?:...)"]
+    PatternElements --> Lookarounds["Assertions: (?=...), (?!...), (?<=...), (?<!...)"]
+
+    FlagsTaxonomy --> FlagsList["g: Global Match<br/>i: Case-Insensitive<br/>m: Multiline (^ / $ per line)<br/>u: Unicode Mode<br/>s: DotAll (. matches newline)<br/>y: Sticky Matching<br/>d: HasIndices (Match Indices)"]
 ```
 
 ---
 
-## 2. Common Regular Expression Patterns
+## 2. Named Capturing Groups & Lookaround Assertions
+
+```mermaid
+flowchart LR
+    subgraph Lookaround Assertions
+        PositiveLA["Positive Lookahead (?=...)<br/>Matches if followed by pattern"]
+        NegativeLA["Negative Lookahead (?!...)<br/>Matches if NOT followed by pattern"]
+        PositiveLB["Positive Lookbehind (?<=...)<br/>Matches if preceded by pattern"]
+        NegativeLB["Negative Lookbehind (?<!...)<br/>Matches if NOT preceded by pattern"]
+    end
+```
 
 ```javascript
-// Literal Pattern Syntax
-const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-console.log(emailRegex.test("user@example.com")); // true
+// 1. Named Capturing Groups: (?<year>\d{4})
+const datePattern = /(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})/;
+const matchResult = datePattern.exec("2026-08-31");
 
-// Phone Number Match Pattern (\d{10})
-const phoneRegex = /^\d{10}$/;
-console.log(phoneRegex.test("9876543210")); // true
+console.log("Matched Year :", matchResult.groups.year);  // "2026"
+console.log("Matched Month:", matchResult.groups.month); // "08"
+console.log("Matched Day  :", matchResult.groups.day);   // "31"
+
+// 2. Lookahead & Lookbehind Assertions
+// Match price ONLY if preceded by INR currency symbol (Positive Lookbehind)
+const pricePattern = /(?<=INR\s?)\d+/g;
+const text = "Price is INR 4500 for product A and USD 60 for product B";
+
+console.log("INR Prices Matched:", text.match(pricePattern)); // ["4500"]
 ```
 
 ---
 
-## 3. Key RegExp Methods
+## 3. Catastrophic Backtracking Security Hazard (ReDoS)
+
+**ReDoS (Regular Expression Denial of Service)** occurs when a nested quantifier pattern (e.g. `(a+)+$`) forces the RegExp engine into exponential $\mathcal{O}(2^N)$ backtracking attempts when evaluated against non-matching input strings, freezing the single-threaded Event Loop at 100% CPU:
+
+```mermaid
+flowchart TD
+    PatternDef["Nested Quantifier Pattern: (a+)+$"] --> InputFail["Non-Matching Input: 'aaaaaaaaaaaaaaaaaaaa!'"]
+    InputFail --> ExponentialTree["RegExp Engine Attempts Exponential Backtracking<br/>- 2^N state evaluation paths!"]
+    ExponentialTree --> Freeze["Event Loop Freezes at 100% CPU!<br/>ReDoS Security Denial of Service Attack!"]
+```
 
 ```javascript
-const text = "JavaScript release in 1995, ES6 release in 2015";
+// DANGER: ReDoS Catastrophic Backtracking Vulnerability
+const vulnerableRegex = /(a+)+$/; 
 
-// 1. RegExp.prototype.test() -> Returns boolean
-console.log(/\d{4}/.test(text)); // true
+// UNCOMMENTING THIS WILL FREEZE YOUR CPU THREAD FOR MINUTES:
+// vulnerableRegex.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!");
 
-// 2. String.prototype.match() -> Returns array of matches
-console.log(text.match(/\d{4}/g)); // ["1995", "2015"]
-
-// 3. String.prototype.replace() -> Replaces matched pattern
-console.log(text.replace(/\d{4}/, "YYYY")); // "JavaScript release in YYYY, ES6 release in 2015"
+// SAFE PATTERN: Eliminate nested quantifiers! Use atomic matching or un-nested quantifiers
+const safeRegex = /^a+$/;
+console.log(safeRegex.test("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!")); // Instantly returns false!
 ```
 
 ---
 
-## Key Takeaways
-1. Use **`/pattern/flags`** syntax to create regular expressions.
-2. Use **`regex.test(str)`** to quickly check if a pattern exists.
-3. Use **`str.match(regex)`** with global flag `/g` to extract all matching instances.
-4. Cache static `RegExp` instances outside hot loops to improve performance.
+## 4. Modern String RegExp API Suite (`matchAll`, `replaceAll`)
+
+```javascript
+const logData = "ERR_01: DB Timeout, ERR_02: Socket Closed, ERR_03: Auth Fail";
+const errorPattern = /ERR_(?<id>\d{2}):\s(?<msg>[^,]+)/g;
+
+// String.prototype.matchAll() returns an iterator over ALL matching groups cleanly
+for (const match of logData.matchAll(errorPattern)) {
+  console.log(`Error Code ${match.groups.id} -> ${match.groups.msg}`);
+}
+/*
+  Output:
+  Error Code 01 -> DB Timeout
+  Error Code 02 -> Socket Closed
+  Error Code 03 -> Auth Fail
+*/
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Use Named Capturing Groups `(?<name>...)`**: Replace fragile numeric group indices (`match[1]`) with named capturing groups (`match.groups.name`) for readable regex extraction.
+2. **Beware of ReDoS Catastrophic Backtracking**: Avoid nesting quantifiers like `(a+)+` or `(a|a)+`. Test complex regex patterns against bad input strings using ReDoS checkers.
+3. **Use `matchAll()` for Global Group Iteration**: Use `str.matchAll(globalRegex)` instead of `exec()` loops to cleanly iterate over capturing groups.
+4. **Cache Static `RegExp` Objects Outside Hot Loops**: Avoid instantiating `new RegExp(...)` inside `for` loops; compile regex literals once at module load time.
+
