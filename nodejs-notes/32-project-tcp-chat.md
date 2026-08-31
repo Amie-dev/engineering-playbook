@@ -1,10 +1,12 @@
-# Module 32: Capstone Project — Multi-Room Real-Time TCP Chat Server
+# Module 32: Capstone Project — Multi-Room Real-Time TCP Chat Server Architecture
 
 ## Overview
 
 This capstone project implements a zero-dependency, real-time **Multi-Room TCP Chat Server** using the core Node.js **`node:net`** module.
 
-It showcases low-level TCP socket management, line-delimited protocol parsing (`\n`), socket pool state tracking (`Set`), dynamic room isolation (`/join <room>`), nickname assignment (`/nick <name>`), direct peer-to-peer messaging (`/msg <name> <text>`), and low-latency TCP socket configuration (`socket.setNoDelay(true)`).
+It showcases low-level TCP socket management, line-delimited protocol parsing (`\n`), socket pool state tracking (`Set`), dynamic room channel isolation (`/join <#room>`), nickname assignment (`/nick <name>`), direct peer-to-peer private messaging (`/msg <user> <text>`), and low-latency TCP socket settings (`socket.setNoDelay(true)`).
+
+Understanding **Multi-Room Socket Broadcasting Architecture**, **Command Line Protocol Parsing Lifecycle**, **Custom TCP Protocol Commands**, and **Clean Socket Teardown** is essential.
 
 ---
 
@@ -21,9 +23,13 @@ flowchart TD
         Socket3["Client: Charlie (Socket 3)"] --> RoomDev
     end
 
-    Socket1 -->|socket.write: Hello General!| ServerRouter[TCP Message Router & Protocol Parser]
+    Socket1 -->|socket.write: Hello General!\n| ServerRouter[TCP Message Router & Protocol Parser]
     ServerRouter -->|Broadcast to #general subscribers| Socket2
     ServerRouter -.->|ISOLATED: No delivery to #dev| Socket3
+
+    style RoomGeneral fill:#dbeafe,stroke:#1d4ed8
+    style RoomDev fill:#dcfce7,stroke:#15803d
+    style ServerRouter fill:#fef3c7,stroke:#b45309
 ```
 
 ---
@@ -39,35 +45,54 @@ sequenceDiagram
     participant Server as TCP Router Engine
     actor Bob as TCP Client (Bob)
 
-    Alice->>Server: Connect to Port 6000
-    Server-->>Alice: "Welcome to TCP Chat! Set name: /nick <name>"
+    Alice->>Server: Connects to Port 6000
+    Server-->>Alice: Transmits Welcome Banner & Command Guide
     
-    Alice->>Server: /nick Alice\n
+    Alice->>Server: Transmits: /nick Alice\n
     Server-->>Alice: "✔ Nickname set to 'Alice'."
 
-    Alice->>Server: /join #dev\n
-    Server-->>Alice: "✔ Joined room '#dev'."
-    Server-->>Bob: "System: Alice joined room #dev."
+    Alice->>Server: Transmits: /join #dev\n
+    Server-->>Alice: "✔ Switched to room '#dev'."
+    Server-->>Bob: "*** System: Alice joined room #dev ***"
 
-    Alice->>Server: Hello room!\n
+    Alice->>Server: Transmits: Hello room!\n
     Server-->>Bob: "[#dev] Alice: Hello room!"
 ```
 
 ---
 
-## 3. TCP Custom Protocol Command Matrix
+## 3. TCP Protocol Message Framing & Parsing
 
-| Command Syntax | Parameters | Function & Behavior | Example Usage |
-| :--- | :--- | :--- | :--- |
-| **`/nick`** | `<new_name>` | Assigns or updates client's display nickname. | `/nick Alice` |
-| **`/join`** | `<room_name>` | Switches client to target chat channel room. | `/join #dev` |
-| **`/msg`** | `<target_nick> <text>` | Sends private message directly to target user. | `/msg Bob Secrets` |
-| **`/who`** | N/A | Lists all active users in current room. | `/who` |
-| **`/quit`** | N/A | Disconnects client cleanly from server. | `/quit` |
+```mermaid
+flowchart TD
+    RawSocketData["Raw Incoming TCP Stream Data Chunk:<br/>'/nick Alice\n/join #dev\nHello '"] --> BufferAcc[Client Buffer Accumulator]
+    
+    BufferAcc --> SplitLoop{Buffer contains newline '\\n'?}
+    
+    SplitLoop -- Yes --> ExtractLine["Extract complete command string<br/>(e.g., '/nick Alice')"]
+    ExtractLine --> Router[Command Switch Router]
+    
+    SplitLoop -- No --> WaitData["Retain incomplete string ('Hello ')<br/>Wait for next 'data' chunk emission"]
+
+    style BufferAcc fill:#fef3c7,stroke:#b45309
+    style Router fill:#dcfce7,stroke:#15803d
+```
 
 ---
 
-## 4. Production Multi-Room TCP Chat Server Code
+## 4. TCP Custom Protocol Command Matrix
+
+| Command Syntax | Arguments / Parameters | Functionality & Technical Behavior | Example Call |
+| :--- | :--- | :--- | :--- |
+| **`/nick`** | `<new_name>` | Assigns or updates client's display nickname in socket pool. | `/nick Alice` |
+| **`/join`** | `<#room_name>` | Switches client to target chat channel room (`#general`, `#dev`). | `/join #dev` |
+| **`/msg`** | `<target_nick> <text>` | Transmits private message directly to target user socket. | `/msg Bob Secrets` |
+| **`/who`** | N/A | Lists all active users in client's current room. | `/who` |
+| **`/quit`** | N/A | Gracefully closes client TCP socket connection. | `/quit` |
+
+---
+
+## 5. Production Code Showcase: Multi-Room TCP Chat Server
 
 ```javascript
 const net = require("node:net");
@@ -93,7 +118,7 @@ class MultiRoomTcpChatServer {
       const client = new ChatClient(socket);
       this.clients.add(client);
 
-      // Low-Latency TCP Socket Settings
+      // Low-Latency TCP Socket Performance Settings
       socket.setEncoding("utf-8");
       socket.setNoDelay(true);          // Disable Nagle's algorithm for instant message delivery
       socket.setKeepAlive(true, 30000); // Send Keep-Alive probes every 30s
@@ -137,8 +162,9 @@ class MultiRoomTcpChatServer {
       });
     });
 
-    server.listen(this.port, () => {
-      console.log(`Multi-Room TCP Chat Server listening on port ${this.port}`);
+    const PORT = process.env.PORT || this.port;
+    server.listen(PORT, () => {
+      console.log(`=== MULTI-ROOM TCP CHAT SERVER ACTIVE: Listening on port ${PORT} ===`);
     });
   }
 
@@ -234,8 +260,9 @@ chatServer.start();
 
 ## Key Production Takeaways
 
-1. **Always Enforce Line Framing (`\n`)**: TCP streams do not preserve message boundaries. Always buffer incoming data and parse messages using newline delimiters.
-2. **Disable Nagle's Algorithm (`socket.setNoDelay(true)`)**: Essential for chat servers to prevent the OS from buffering small single-line messages.
-3. **Clean Up Disconnected Sockets Immediately**: Always delete disconnected client objects from your tracking `Set` on `'end'` or `'error'` events to prevent memory leaks and dead socket write errors.
-4. **Isolate Room Broadcasts**: Check matching room properties (`client.room === targetRoom`) before sending socket writes to maintain channel privacy.
+1. **Always Enforce Line Framing (`\n`)**: TCP streams do not preserve message boundaries. Always buffer incoming data chunks and parse complete messages using newline delimiters.
+2. **Disable Nagle's Algorithm (`socket.setNoDelay(true)`)**: Essential for real-time chat servers to prevent the operating system from buffering small single-line text messages.
+3. **Clean Up Disconnected Sockets Immediately**: Delete disconnected client objects from your tracking `Set` on `'end'` or `'error'` events to prevent memory leaks and write errors to closed sockets.
+4. **Isolate Room Broadcasts**: Check matching room properties (`client.room === targetRoom`) before executing socket writes to guarantee channel privacy.
+
 

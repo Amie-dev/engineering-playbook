@@ -1,27 +1,32 @@
-# Module 21: System Utilities — Promisification, Inspection, and Type Checking (`util`)
+# Module 21: System Utilities — Promisification, Inspection, and Type Verification (`util`)
 
 ## Overview
 
-The built-in **`node:util`** module supplies internal runtime utilities designed for debugging, object inspection, function signature transformation, and strict type verification.
+The built-in **`node:util`** module supplies internal runtime utilities designed for low-level debugging, object inspection, function signature transformation, and strict type verification.
 
-Key capabilities include **`util.promisify()`** (converting error-first callback APIs into native Promises), **`util.callbackify()`** (the inverse operation), **`util.inspect()`** (customizable object formatting), **`util.types`** (unambiguous V8 C++ type checking), and **`util.deprecate()`** (marking deprecated code APIs).
+Key capabilities include **`util.promisify()`** (converting error-first callback APIs into native Promises), **`util.callbackify()`** (the inverse operation), **`util.inspect()`** (customizable object formatting), **`util.types`** (unambiguous V8 engine type checking), and **`util.deprecate()`** (marking deprecated API methods).
+
+Understanding **Function Signature Promisification Topologies**, **`util.promisify.custom` Symbols**, **`util.inspect.custom` Sensitive Field Redaction**, and **V8 `util.types` Verification** is essential.
 
 ---
 
-## 1. Function Transformation Architecture: `promisify` and `callbackify`
+## 1. Function Transformation Architecture: `promisify` & `callbackify`
 
 ```mermaid
 flowchart LR
-    subgraph Callback Paradigm
-        LegacyFn["Legacy Function: fn(arg1, arg2, (err, res) => {})"]
+    subgraph Error-First Callback Paradigm
+        LegacyFn["Legacy Callback API:<br/>fn(arg1, arg2, (err, res) => {})"]
     end
 
-    subgraph Promise Paradigm
-        PromiseFn["Async Function: const res = await promisifiedFn(arg1, arg2)"]
+    subgraph Native Promise Paradigm
+        PromiseFn["Async Promise API:<br/>const res = await promisifiedFn(arg1, arg2)"]
     end
 
     LegacyFn -->|util.promisify| PromiseFn
     PromiseFn -->|util.callbackify| LegacyFn
+
+    style LegacyFn fill:#fef3c7,stroke:#b45309
+    style PromiseFn fill:#dcfce7,stroke:#15803d
 ```
 
 ### Custom Promisification Symbol (`util.promisify.custom`)
@@ -50,15 +55,15 @@ customPromiseFn(21).then((res) => console.log("Custom Promisify Result:", res));
 
 ---
 
-## 2. Deep Object Inspection & Custom Formatter (`util.inspect.custom`)
+## 2. Deep Object Inspection & Sensitive Data Redaction (`util.inspect.custom`)
 
-By default, `console.log()` truncates deeply nested objects into `[Object]` or `[Array]` placeholders. **`util.inspect()`** forces complete recursive object tree printing.
+By default, `console.log()` truncates deeply nested objects into `[Object]` or `[Array]` placeholders. **`util.inspect()`** forces complete recursive object tree printing:
 
 ```mermaid
-graph TD
+flowchart TD
     ObjectInput[Complex Nested Object] --> Inspect["util.inspect(obj, options)"]
     
-    subgraph Inspection Config Options
+    subgraph Inspection Formatting Options
         Depth["depth: null (Unlimited depth recursion)"]
         Colors["colors: true (ANSI terminal syntax highlighting)"]
         Hidden["showHidden: true (Includes non-enumerable properties)"]
@@ -66,76 +71,76 @@ graph TD
     end
 
     Inspect --> FormattedString[Formatted Colored String output to stdout]
+
+    style Inspect fill:#dbeafe,stroke:#1d4ed8
 ```
 
-### Custom Inspection Output via `util.inspect.custom`
+---
 
-You can customize how your domain classes print in logs without exposing internal private keys:
+## 3. Strict Type Verification Matrix (`util.types`)
+
+JavaScript `typeof` and `instanceof` checks can be unreliable across different execution contexts or V8 Isolates. **`util.types`** provides unambiguous type checking backed directly by V8 C++ engine internal types:
+
+| Type Guard Method | Evaluates `true` For | Contrast with Standard JS Operator |
+| :--- | :--- | :--- |
+| **`util.types.isDate(val)`** | Native `Date` instances | Immune to cross-realm iframe/VM prototype pollution. |
+| **`util.types.isPromise(val)`** | Native `Promise` instances | Differing from duck-typed thenable objects. |
+| **`util.types.isRegExp(val)`** | Native `RegExp` objects | Standard `typeof /abc/ === 'object'`. |
+| **`util.types.isNativeError(val)`**| `Error`, `TypeError`, `RangeError` | Reliably catches custom error subclasses. |
+| **`util.types.isAnyArrayBuffer(val)`**| `ArrayBuffer` & `SharedArrayBuffer` | Checks raw binary memory buffer allocations. |
+| **`util.types.isAsyncFunction(val)`**| Functions declared with `async` | Distinguishes `async` functions from normal functions. |
+
+---
+
+## 4. Production Code Showcase: Custom Inspection Redaction & Type Checking
 
 ```javascript
 const util = require("node:util");
 
+// ==========================================
+// 1. SENSITIVE FIELD REDACTION WITH INSPECT CUSTOM
+// ==========================================
 class UserAccount {
   constructor(id, name, secretToken) {
     this.id = id;
     this.name = name;
-    this._secretToken = secretToken; // Sensitive property
+    this._secretToken = secretToken; // Sensitive field
   }
 
-  // Override default console / util.inspect formatting
+  // Override default console / util.inspect formatting to prevent credential leaks in logs
   [util.inspect.custom](depth, options, inspect) {
-    return `UserAccount [ID: ${this.id}, Name: '${this.name}', Token: 'REDACTED']`;
+    return `UserAccount [ID: ${this.id}, Name: '${this.name}', Token: '***REDACTED***']`;
   }
 }
 
+console.log("=== EXECUTING SYSTEM UTILITIES SUITE ===");
+
 const user = new UserAccount(101, "Alice", "Bearer_eyJhbGciOi...");
-console.log(util.inspect(user)); 
-// Prints: UserAccount [ID: 101, Name: 'Alice', Token: 'REDACTED']
-```
+console.log("1. Custom Inspected Object Output:");
+console.log("  ", util.inspect(user)); 
+// Output: UserAccount [ID: 101, Name: 'Alice', Token: '***REDACTED***']
 
----
-
-## 3. Strict Type Verification via `util.types`
-
-JavaScript `typeof` and `instanceof` can be unreliable across different execution contexts or V8 isolates. **`util.types`** provides unambiguous type checking backed directly by V8 engine internal types:
-
-| Type Guard API | Evaluates `true` For | Contrast with Standard JS |
-| :--- | :--- | :--- |
-| **`util.types.isDate(val)`** | Native `Date` instances | Safe against cross-realm iframe/VM objects. |
-| **`util.types.isPromise(val)`** | Native `Promise` instances | Differing from thenable duck-typing. |
-| **`util.types.isRegExp(val)`** | Native `RegExp` objects | `typeof /abc/ === 'object'`. |
-| **`util.types.isNativeError(val)`**| `Error`, `TypeError`, `RangeError` | Catches custom subclasses reliably. |
-| **`util.types.isAnyArrayBuffer(val)`**| `ArrayBuffer` & `SharedArrayBuffer` | Checks raw binary memory allocations. |
-| **`util.types.isAsyncFunction(val)`**| Functions declared with `async` | Distinguishes from standard functions. |
-
----
-
-## 4. Practical Code Demonstration
-
-```javascript
-const util = require("node:util");
-
-// 1. Deprecating Legacy API Functions
+// ==========================================
+// 2. DEPRECATION API WARNING
+// ==========================================
 const legacyCalculateTax = util.deprecate(
   (subtotal) => subtotal * 0.15,
-  "WARNING: legacyCalculateTax() is deprecated. Use taxEngine.calculate() instead.",
-  "DEP0099" // Unique Deprecation Code
+  "WARNING: legacyCalculateTax() is deprecated. Use TaxEngine.calculate() instead.",
+  "DEP0099" // Unique Deprecation Identifier
 );
 
-console.log("Tax Result:", legacyCalculateTax(100)); // Prints deprecation warning to stderr on first call!
+console.log("\n2. Deprecated Function Call Result:", legacyCalculateTax(100));
 
-// 2. String Formatting via util.format()
-const logMessage = util.format("Server Process %d (%s) initialized in %d ms", process.pid, "main.js", 450);
-console.log("\nFormatted Log:", logMessage);
-
-// 3. Robust Type Checking via util.types
+// ==========================================
+// 3. V8 TYPE VALIDATION VIA UTIL.TYPES
+// ==========================================
 const samplePromise = Promise.resolve(42);
 const sampleDate = new Date();
 
-console.log("\n--- util.types Validation ---");
-console.log("Is Native Promise?", util.types.isPromise(samplePromise)); // true
-console.log("Is Native Date?   ", util.types.isDate(sampleDate));       // true
-console.log("Is Async Function?", util.types.isAsyncFunction(async () => {})); // true
+console.log("\n3. V8 Engine Type Guards (util.types):");
+console.log("   Is Native Promise? :", util.types.isPromise(samplePromise)); // true
+console.log("   Is Native Date?    :", util.types.isDate(sampleDate));       // true
+console.log("   Is Async Function? :", util.types.isAsyncFunction(async () => {})); // true
 ```
 
 ---
@@ -146,4 +151,5 @@ console.log("Is Async Function?", util.types.isAsyncFunction(async () => {})); /
 2. **Implement `util.inspect.custom` on Domain Models**: Mask sensitive fields (passwords, JWT secrets, credit cards) by implementing the `util.inspect.custom` symbol method on domain classes.
 3. **Prefer `util.types` over `instanceof` in Library Code**: `util.types` methods are immune to prototype manipulation and cross-realm V8 Isolate type confusion.
 4. **Use `util.promisify` for Third-Party Callback Libraries**: Wrap legacy callback functions cleanly with `util.promisify` to consume them with modern `async/await`.
+
 

@@ -1,154 +1,162 @@
-# Module 09: EventEmitter and Event-Driven Node.js Core Architecture
+# Module 09: EventEmitter and Event-Driven Architecture in Node.js
 
 ## Overview
 
-The **`EventEmitter`** class from the core `node:events` module forms the foundational architecture of Node.js. Core components—including HTTP Servers, TCP Sockets, Stream Pipelines, and Process Signal handling—inherit from or compose `EventEmitter`.
+The **`EventEmitter`** class from the core `node:events` module forms the underlying event-driven foundation of Node.js. Core runtime primitives—including HTTP Servers, TCP Sockets, Stream Pipelines, and Process Signal listeners—inherit from or compose `EventEmitter`.
 
-It implements the asynchronous **Observer Pattern**, allowing objects to emit named events (`emit`) and register subscriber callbacks (`on`, `once`, `prependListener`).
+It implements the asynchronous **Observer Pattern**, allowing objects to emit named domain events (`emit`) and register subscriber callbacks (`on`, `once`, `prependListener`).
+
+Understanding **Synchronous Dispatch Execution**, **Special `'error'` Crash Semantics**, **`MaxListenersExceededWarning` Mitigation via `AbortController`**, and **`events.once()` Promisification** is essential.
 
 ---
 
-## 1. Under the Hood: Internal Subscriber Map & Synchronous Dispatch
+## 1. Under the Hood: Synchronous Dispatch Loop & Subscriber Map
 
-A common misconception is that `EventEmitter` callbacks execute asynchronously on the Event Loop. 
+A frequent architectural misconception is that `EventEmitter` subscriber callbacks execute asynchronously on the Event Loop.
 
-In reality, **`emitter.emit()` iterates through its internal callback listener array and executes every registered function SYNCHRONOUSLY** on the main thread call stack in the exact order they were registered.
+In reality, **`emitter.emit()` iterates over its internal listener array and executes every registered callback SYNCHRONOUSLY** on the main V8 thread call stack in the exact order they were registered.
 
 ```mermaid
 flowchart TD
-    subgraph EventEmitter Instance Internal Storage
-        EventMap["_events Object Map<br/>{ 'user:login': [cb1, cb2], 'error': [errCb] }"]
+    subgraph EventEmitter Internal Instance Map
+        EventMap["_events Object Map<br/>{ 'order:created': [fn1, fn2], 'error': [errFn] }"]
     end
 
-    EmitCall["emitter.emit('user:login', payload)"] --> FetchArray["Lookup _events['user:login'] array"]
-    FetchArray --> LoopExec["Iterate Array & Execute cb1(payload) -> cb2(payload)<br/>SYNCHRONOUSLY on Main Call Stack!"]
-    LoopExec --> Finish[Return boolean true/false]
+    EmitCall["emitter.emit('order:created', payload)"] --> FetchArray["Lookup _events['order:created'] array"]
+    FetchArray --> LoopExec["Iterate Array & Execute fn1(payload) -> fn2(payload)<br/>SYNCHRONOUSLY on V8 Main Call Stack!"]
+    LoopExec --> Finish[Returns boolean true/false]
+
+    style EventMap fill:#dbeafe,stroke:#1d4ed8
+    style LoopExec fill:#fef3c7,stroke:#b45309
 ```
 
-### Async Listener Execution Pattern
+### Non-Blocking Asynchronous Listener Pattern
 
-If you require event listeners to run asynchronously without blocking the event emitting call stack, wrap the callback execution in `setImmediate()` or `queueMicrotask()`:
+To prevent long-running listener callbacks from blocking the emitting call stack, offload execution to the Check phase or microtask queue:
 
 ```javascript
 const EventEmitter = require("node:events");
 const emitter = new EventEmitter();
 
-emitter.on("data:ingested", (data) => {
-  // Offload processing to Check phase to keep dispatch non-blocking:
+emitter.on("user:registered", (user) => {
+  // Offload heavy processing to Check phase to keep emit stack non-blocking:
   setImmediate(() => {
-    console.log("Async listener processing ingested data:", data.id);
+    console.log("Async background email dispatch for user:", user.email);
   });
 });
 ```
 
 ---
 
-## 2. Event Dispatch Sequence & Error Handling Rules
+## 2. Special `'error'` Event Crash Semantics
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Publisher as Domain Service / Order System
-    participant Emitter as Custom EventEmitter
+    actor Publisher as Domain Service / Processing Engine
+    participant Emitter as EventEmitter Instance
     participant Listener as Registered Event Listener
     participant Process as Node.js Process
 
     Publisher->>Emitter: emitter.emit('error', new Error('DB Crash'))
     
     alt 'error' Listener Exists
-        Emitter->>Listener: Invoke error listener callback
-        Listener-->>Publisher: Graceful error handled
+        Emitter->>Listener: Invokes error listener callback
+        Listener-->>Publisher: Graceful error handled cleanly
     else NO 'error' Listener Registered!
-        Emitter->>Process: Uncaught 'error' event emitted!
-        Process-->>Publisher: CRASH PROCESS! (UnhandledFatalException)
+        Emitter->>Process: Unhandled 'error' event emitted!
+        Process-->>Publisher: CRASH PROCESS IMMEDIATELY! (UncaughtFatalException)
     end
 ```
 
 > [!CAUTION]
-> **Special Behavior of `'error'` Events**: If an `EventEmitter` emits an `'error'` event and **no listener** is currently attached to handle it, Node.js will print the stack trace and **crash the entire application process**! Always register an `on('error')` listener.
+> **Special `'error'` Event Behavior**: If an `EventEmitter` instance emits an `'error'` event and **no listener** is currently attached to handle it, Node.js outputs the unhandled error stack trace and **terminates the entire process immediately**! Always attach a fallback `.on('error')` listener.
 
 ---
 
-## 3. Memory Leak Prevention: `MaxListenersExceededWarning`
+## 3. Memory Leak Prevention: `MaxListenersExceededWarning` & `AbortController`
 
-By default, an `EventEmitter` prints a memory leak warning if **more than 10 listeners** are attached to a single event key.
+By default, an `EventEmitter` prints a warning if **more than 10 listeners** are attached to a single event key:
 
 ```text
-(node:12345) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 
-11 user:login listeners added to [UserTracker]. Use emitter.setMaxListeners() to increase limit.
+(node:14210) MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 
+11 order:created listeners added to [OrderEngine]. Use emitter.setMaxListeners() to increase limit.
 ```
 
-### Memory Leak Root Causes & Mitigation
+### Automatic Subscription Cleanup via `AbortController`
 
-1. **Unsubscribing Temporary Listeners**: Failing to call `emitter.removeListener()` or `off()` when short-lived sockets or HTTP connections disconnect.
-2. **Raising the Limit Explicitly**: If your design legitimately requires 50 subscribers, set `emitter.setMaxListeners(50)` to prevent false-positive warnings.
-3. **Using AbortController for Auto-Cleanup**: Modern Node.js supports binding listeners tied to an `AbortSignal`.
+Modern Node.js allows passing an `AbortSignal` to `emitter.on()`. Calling `.abort()` on the controller automatically detaches the listener from the event emitter:
 
-```javascript
-const EventEmitter = require("node:events");
-const emitter = new EventEmitter();
-const ac = new AbortController();
+```mermaid
+flowchart LR
+    AC["const ac = new AbortController()"] --> Attach["emitter.on('data', cb, { signal: ac.signal })"]
+    Attach --> TriggerAbort["ac.abort()"]
+    TriggerAbort --> Unbind["Listener automatically removed from _events map!<br/>(Zero Memory Leaks)"]
 
-// Automatically removes listener when ac.abort() is called!
-emitter.on("telemetry", (data) => {
-  console.log("Telemetry record:", data);
-}, { signal: ac.signal });
-
-// Later when destroying subscriber component:
-ac.abort(); // Unbinds listener cleanly without manual removeListener!
+    style AC fill:#dbeafe,stroke:#1d4ed8
+    style Unbind fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 4. Production Domain EventEmitter Implementation
+## 4. Production Domain Code Showcase: Custom EventEmitter Engine
 
 ```javascript
 const EventEmitter = require("node:events");
-const { events } = require("node:events");
+const { once } = require("node:events");
 
-// Custom Domain Model extending EventEmitter
+// Custom Domain Class extending EventEmitter
 class OrderProcessingEngine extends EventEmitter {
   constructor() {
     super();
-    // Increase default max listener threshold for high concurrency:
+    // Increase default max listener threshold for high concurrency
     this.setMaxListeners(25);
   }
 
   processOrder(orderId, amount) {
-    console.log(`\n[ORDER ENGINE] Processing Order #${orderId} ($${amount})`);
+    console.log(`\n[ENGINE]: Processing Order #${orderId} ($${amount})`);
 
     if (amount <= 0) {
-      // Emit error event if payload invalid
-      this.emit("error", new Error(`Invalid order amount: $${amount} for Order #${orderId}`));
+      // Emit special 'error' event for invalid payload
+      this.emit("error", new Error(`Invalid order amount $${amount} for #${orderId}`));
       return;
     }
 
-    // Emit domain event
+    // Emit domain success event
     this.emit("order:created", { orderId, amount, timestamp: Date.now() });
   }
 }
 
+// Instantiate Engine
 const engine = new OrderProcessingEngine();
 
-// 1. Permanent Service Listener
-engine.on("order:created", (order) => {
-  console.log(`  [INVENTORY SERVICE] Deducting stock for Order #${order.orderId}`);
-});
-
-// 2. One-Time Audit Listener
-engine.once("order:created", (order) => {
-  console.log(`  [AUDIT LOG] Initial first-order metrics logged for #${order.orderId}`);
-});
-
-// 3. Mandatory Error Guard
+// 1. Mandatory Error Handler Guard
 engine.on("error", (err) => {
-  console.error(`  [ERROR GUARD] Handled engine failure: ${err.message}`);
+  console.error("  ✓ [ERROR HANDLER]: Gracefully caught failure:", err.message);
 });
 
-// Execute Domain Logic
-engine.processOrder("ORD-9901", 149.99); // Triggers both on and once listeners
-engine.processOrder("ORD-9902", 49.50);  // Triggers ONLY permanent 'on' listener
-engine.processOrder("ORD-9903", -10.00); // Triggers 'error' listener cleanly without crash
+// 2. Permanent Domain Event Listener
+engine.on("order:created", (order) => {
+  console.log(`  ✓ [INVENTORY SERVICE]: Reserved stock for Order #${order.orderId}`);
+});
+
+// 3. One-Time Audit Listener
+engine.once("order:created", (order) => {
+  console.log(`  ✓ [AUDIT LOG]: First-order metrics recorded for #${order.orderId}`);
+});
+
+// 4. Subscription Managed via AbortController
+const ac = new AbortController();
+engine.on("order:created", (order) => {
+  console.log(`  ✓ [TELEMETRY]: Temporary tracking for #${order.orderId}`);
+}, { signal: ac.signal });
+
+// Execution Flow
+engine.processOrder("ORD-101", 150.00); // Fires all listeners
+ac.abort(); // Detaches temporary telemetry listener cleanly!
+
+engine.processOrder("ORD-102", 75.50);  // Telemetry listener skipped!
+engine.processOrder("ORD-103", -20.00); // Triggers error handler cleanly without crashing!
 ```
 
 ---
@@ -160,30 +168,31 @@ Node.js provides `events.once(emitter, eventName)` to await an event emission as
 ```javascript
 const { once, EventEmitter } = require("node:events");
 
-async function waitForServerReady() {
-  const server = new EventEmitter();
+async function waitForServerInitialization() {
+  const bootEmitter = new EventEmitter();
 
-  // Simulate async server boot up
+  // Simulate async background boot sequence
   setTimeout(() => {
-    server.emit("ready", { port: 8080, status: "ONLINE" });
-  }, 500);
+    bootEmitter.emit("ready", { port: 8080, status: "ONLINE" });
+  }, 300);
 
   console.log("Awaiting 'ready' event emission...");
-  // Pauses async function until 'ready' is emitted!
-  const [eventPayload] = await once(server, "ready");
+  // Pauses async function until 'ready' event is emitted!
+  const [payload] = await once(bootEmitter, "ready");
   
-  console.log(`Server successfully started on port ${eventPayload.port}!`);
+  console.log(`Server initialized successfully on port ${payload.port}! Status: ${payload.status}`);
 }
 
-waitForServerReady();
+waitForServerInitialization();
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **EventEmitter Callbacks Run Synchronously**: `emitter.emit()` is synchronous. Long-running synchronous code inside an event handler blocks the event emitter caller.
-2. **ALWAYS Register an `'error'` Handler**: Emitting `'error'` without a listener causes Node.js to throw an uncaught exception and crash the process.
-3. **Use `AbortController` Signals for Cleanup**: Pass `{ signal: ac.signal }` to `emitter.on()` to easily detach event subscriptions when components unmount or disconnect.
-4. **Use `once()` for Single-Event Triggers**: Avoid manual flags by using `.once()` for initialization events, socket connection closures, or single-shot task completions.
+1. **EventEmitter Callbacks Run Synchronously**: `emitter.emit()` is synchronous. Long-running synchronous code inside an event handler blocks the event emitting thread.
+2. **ALWAYS Register an `'error'` Listener**: Emitting `'error'` without a listener causes Node.js to throw an uncaught exception and crash the process.
+3. **Use `AbortController` Signals for Cleanup**: Pass `{ signal: ac.signal }` to `emitter.on()` to automatically unbind event subscriptions when components unmount or disconnect.
+4. **Use `once()` for Single-Event Triggers**: Avoid manual boolean flags by using `.once()` for initialization events, socket connection closures, or single-shot task completions.
+
 

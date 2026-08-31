@@ -1,47 +1,52 @@
-# Module 16: Cryptography, Hashing, and AES Encryption (`crypto`)
+# Module 16: Cryptography, Hashing, and AES Encryption (`crypto`) Architecture
 
 ## Overview
 
-The core **`node:crypto`** module exposes cryptographic primitives wrapping OpenSSL C/C++ libraries.
+The core **`node:crypto`** module exposes cryptographic primitives wrapping underlying OpenSSL C/C++ native libraries.
 
-It enables secure data integrity verification via **Hashing** (SHA-256), API signature authentication via **HMAC**, authenticated data confidentiality via **Symmetric Encryption (AES-256-GCM)**, secure password storage via **`scrypt`** / **`pbkdf2`**, and public/private key cryptography via **Asymmetric RSA / ECC**.
+It enables secure data integrity verification via **Hashing** (SHA-256 / SHA-512), API request signature authentication via **HMAC**, authenticated data confidentiality via **Symmetric Encryption (AES-256-GCM)**, memory-hard password derivation via **`scrypt`** / **`pbkdf2`**, and public/private key cryptography via **Asymmetric RSA / Ed25519**.
+
+Understanding **Cryptographic Primitives Architecture**, **AES-256-GCM Authenticated Encryption with Associated Data (AEAD)**, **Timing Attack Mitigation (`crypto.timingSafeEqual`)**, and **Async OpenSSL Offloading** is essential.
 
 ---
 
 ## 1. Cryptographic Primitives Architecture
 
 ```mermaid
-graph TD
-    CryptoModule[node:crypto OpenSSL Wrapper] --> Hashing["1. One-Way Hashing (SHA-256 / SHA-512)<br/>- Irreversible data checksums<br/>- Identical input ALWAYS yields identical hash"]
+flowchart TD
+    CryptoModule[node:crypto OpenSSL C++ Native Wrapper] --> Hashing["1. One-Way Hashing (SHA-256 / SHA-512)<br/>- Irreversible data checksums<br/>- Identical input ALWAYS yields identical hash"]
     CryptoModule --> HMAC["2. Keyed HMAC (HMAC-SHA256)<br/>- Data hash signed with a shared secret key<br/>- Used for API Signature Verification & Webhooks"]
     CryptoModule --> PasswordHash["3. Password Hashing (scrypt / PBKDF2)<br/>- Slow, memory-hard hashing algorithm<br/>- Resistant to GPU brute-force & Rainbow table attacks"]
     CryptoModule --> Symmetric["4. Authenticated Symmetric Encryption (AES-256-GCM)<br/>- Single secret key encrypts & decrypts data<br/>- Auth Tag guarantees ciphertext integrity against tampering"]
-    CryptoModule --> Asymmetric["5. Asymmetric Public/Private Key Cryptography (RSA / Ed25519)<br/>- Public Key encrypts / Private Key decrypts<br/>- Used for TLS, Digital Signatures, and JWT signing"]
+    CryptoModule --> Asymmetric["5. Asymmetric Key Cryptography (RSA / Ed25519)<br/>- Public Key encrypts / Private Key decrypts<br/>- Used for TLS, Digital Signatures, and JWT signing"]
+
+    style Symmetric fill:#dbeafe,stroke:#1d4ed8
+    style PasswordHash fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
 ## 2. AES-256-GCM Authenticated Encryption Flow
 
-Unlike legacy cipher modes (like AES-CBC), **AES-256-GCM** (Galois/Counter Mode) provides **Authenticated Encryption with Associated Data (AEAD)**. It outputs both encrypted ciphertext and an **Authentication Tag (`authTag`)** that verifies the payload was not tampered with.
+Unlike legacy cipher modes (such as AES-CBC), **AES-256-GCM** (Galois/Counter Mode) provides **Authenticated Encryption with Associated Data (AEAD)**. It produces both encrypted ciphertext and a 128-bit **Authentication Tag (`authTag`)** that guarantees the payload was not tampered with in transit:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor App as Application
+    actor App as Application Code
     participant Cipher as crypto.createCipheriv('aes-256-gcm', key, iv)
     participant Decipher as crypto.createDecipheriv('aes-256-gcm', key, iv)
 
-    Note over App: ENCRYPTION PHASE
-    App->>Cipher: Pass Plaintext + 256-bit Key + 96-bit IV
-    Cipher-->>App: Return Ciphertext Hex + 128-bit Auth Tag
+    note over App: ENCRYPTION PHASE
+    App->>Cipher: Supplies Plaintext + 256-bit Key + 96-bit Unique IV
+    Cipher-->>App: Returns Ciphertext Hex + 128-bit Auth Tag Hex
     
-    Note over App: DECRYPTION & INTEGRITY VERIFICATION PHASE
-    App->>Decipher: Pass Ciphertext + Key + IV
-    App->>Decipher: decipher.setAuthTag(authTag)
+    note over App: DECRYPTION & INTEGRITY VERIFICATION PHASE
+    App->>Decipher: Supplies Ciphertext + Key + IV
+    App->>Decipher: Invokes decipher.setAuthTag(authTag)
     
     alt Auth Tag Matches & Ciphertext Untampered
-        Decipher-->>App: Decryption Succeeded! Returns Plaintext
+        Decipher-->>App: Decryption Succeeded! Returns original Plaintext
     else Ciphertext or Auth Tag Altered by Attacker!
         Decipher-->>App: THROW ERROR: Unsupported state or unable to authenticate data!
     end
@@ -51,14 +56,31 @@ sequenceDiagram
 
 ## 3. Password Hashing Security: Why Plain Hashing Fails
 
+```mermaid
+flowchart TD
+    PasswordInput[User Plaintext Password] --> SaltGen[crypto.randomBytes(16) Salt]
+    SaltGen --> ScryptEngine["crypto.scrypt(password, salt, 64, options)<br/>- Memory-hard derivation function<br/>- Offloaded to Libuv Thread Pool"]
+    ScryptEngine --> HashFormat["Store Output Format: 'salt:hash'"]
+    
+    HashFormat --> VerifyStep["crypto.timingSafeEqual(keyBuffer, originalBuffer)<br/>- Defeats Side-Channel Timing Attacks!"]
+
+    style ScryptEngine fill:#dcfce7,stroke:#15803d
+    style VerifyStep fill:#dbeafe,stroke:#1d4ed8
+```
+
 > [!CAUTION]
-> **NEVER hash user passwords with plain SHA-256 or MD5!** 
-> Fast hashes can be computed at billions of hashes per second using modern GPUs. Always use memory-hard, multi-iteration password hashing functions like **`scrypt`** or **`pbkdf2`** with a unique random **Salt**.
+> **NEVER hash user passwords with plain SHA-256 or MD5!** Fast hashes can be computed at billions of hashes per second using modern GPUs. Always use memory-hard, multi-iteration password hashing functions like **`scrypt`** or **`pbkdf2`** with a unique random **Salt**.
+
+---
+
+## 4. Code Showcase: Production AES-256-GCM Encryption Engine & Timing-Safe Hashing
 
 ```javascript
 const crypto = require("node:crypto");
 
-// Secure Password Hashing via Async scrypt (Offloaded to Libuv thread pool)
+// ==========================================
+// 1. TIMING-SAFE PASSWORD HASHING ENGINE
+// ==========================================
 function hashPassword(password) {
   return new Promise((resolve, reject) => {
     // Generate unique 16-byte random salt per user
@@ -68,7 +90,6 @@ function hashPassword(password) {
     crypto.scrypt(password, salt, 64, { N: 16384, r: 8, p: 1 }, (err, derivedKey) => {
       if (err) return reject(err);
       
-      // Store salt + hash combined
       const hashHex = derivedKey.toString("hex");
       resolve(`${salt}:${hashHex}`);
     });
@@ -83,7 +104,8 @@ function verifyPassword(password, storedHash) {
       if (err) return reject(err);
       
       const hashHex = derivedKey.toString("hex");
-      // Use timingSafeEqual to prevent Timing Side-Channel Attacks!
+      
+      // Use timingSafeEqual to defeat Side-Channel Timing Attacks!
       const keyBuffer = Buffer.from(hashHex, "hex");
       const originalBuffer = Buffer.from(originalHash, "hex");
       
@@ -92,15 +114,10 @@ function verifyPassword(password, storedHash) {
     });
   });
 }
-```
 
----
-
-## 4. Complete Production Encryption / Decryption Utilities
-
-```javascript
-const crypto = require("node:crypto");
-
+// ==========================================
+// 2. AES-256-GCM ENCRYPTION CLASS
+// ==========================================
 class EncryptionEngine {
   constructor(secretKeyHex) {
     // Key must be exactly 32 bytes (256 bits) for AES-256
@@ -108,9 +125,9 @@ class EncryptionEngine {
     this.algorithm = "aes-256-gcm";
   }
 
-  // Encrypts plaintext into a unified safe string: iv:authTag:ciphertext
+  // Encrypts plaintext into a unified string: iv:authTag:ciphertext
   encrypt(plainText) {
-    // Generate unique 12-byte (96-bit) Initialization Vector per encryption operation
+    // Generate unique 12-byte (96-bit) Initialization Vector per operation
     const iv = crypto.randomBytes(12);
     
     const cipher = crypto.createCipheriv(this.algorithm, this.key, iv);
@@ -144,22 +161,25 @@ class EncryptionEngine {
   }
 }
 
-// Usage Example
+// Execution Demonstration
+console.log("=== EXECUTING CRYPTOGRAPHIC ENCRYPTION & HASHING SUITE ===");
+
 const masterKey = crypto.randomBytes(32).toString("hex"); // Generate 256-bit key
 const engine = new EncryptionEngine(masterKey);
 
 const secretPayload = "CONFIDENTIAL_API_BEARER_TOKEN_99812";
 const encryptedPayload = engine.encrypt(secretPayload);
 
-console.log("Encrypted Output:", encryptedPayload);
-console.log("Decrypted Output:", engine.decrypt(encryptedPayload));
+console.log("  ✓ Encrypted Format (iv:authTag:ciphertext):", encryptedPayload);
+console.log("  ✓ Decrypted Output Payload               :", engine.decrypt(encryptedPayload));
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Use `crypto.timingSafeEqual()` for Security Comparisons**: Standard string comparison (`===`) leaks timing information based on how many characters match; use `crypto.timingSafeEqual()` when verifying HMAC signatures or password hashes to defeat Timing Attack vectors.
+1. **Use `crypto.timingSafeEqual()` for Security Comparisons**: Standard string equality comparison (`===`) leaks timing information based on how many characters match; use `crypto.timingSafeEqual()` when verifying HMAC signatures or password hashes to defeat Timing Side-Channel Attack vectors.
 2. **Always Use Unique IVs for AES Encryption**: Never hardcode or reuse Initialization Vectors (`iv`) across multiple AES encryptions. Reusing an IV with the same key breaks AES security.
 3. **Prefer AES-256-GCM over AES-CBC**: GCM mode includes built-in authentication tags (`getAuthTag()`), preventing bit-flipping attacks and ciphertext manipulation.
 4. **Use Asynchronous Crypto Functions**: Synchronous cryptographic operations (e.g. `crypto.pbkdf2Sync` or `crypto.scryptSync`) block the single-threaded Event Loop. Always use callback or promise-based async cryptographic functions.
+

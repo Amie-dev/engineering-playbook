@@ -1,4 +1,4 @@
-# Module 31: Capstone Project — Production Streaming Log File Analyzer
+# Module 31: Capstone Project — Production Streaming Log File Analyzer Architecture
 
 ## Overview
 
@@ -6,18 +6,20 @@ This capstone project implements a high-performance **Streaming Log File Analyze
 
 It is engineered to process multi-gigabyte Nginx/Apache access log files line-by-line in constant **$O(1)$ memory overhead**, extracting real-time metrics including HTTP status distributions, Top Client IP requesters, average response latency, and overall error rate percentages.
 
+Understanding **Streaming Log Pipelines**, **Memory-Bounded Metrics Accumulation ($O(1)$ RAM)**, **Combined Access Log Regex Parsing**, and **Bounded Error Ring Buffers** is essential.
+
 ---
 
 ## 1. Streaming Log Pipeline Architecture
 
 ```mermaid
 flowchart LR
-    LargeLogFile["Gigabyte Access Log File (access.log)"] --> ReadStream["fs.createReadStream() (64 KB Chunk Buffer)"]
-    ReadStream --> ReadlineInterface["readline.createInterface ({ crlfDelay: Infinity })"]
+    LargeLogFile["Gigabyte Access Log File (access.log)"] --> ReadStream["fs.createReadStream()<br/>(64 KB Chunk Buffer Stream)"]
+    ReadStream --> ReadlineInterface["readline.createInterface ({<br/>  crlfDelay: Infinity<br/>})"]
     
     ReadlineInterface -->|'line' Async Stream Iterator| RegexParser[Log Line Regex Parser]
     
-    subgraph O(1) RAM Accumulator Engine
+    subgraph O(1) Memory Bounded Accumulator Engine
         RegexParser --> IPTracker["Top Client IP Counter Map"]
         RegexParser --> StatusTracker["HTTP Status Code Counter Map"]
         RegexParser --> ErrorQueue["Bounded Top Error Ring Buffer (Max 100)"]
@@ -26,11 +28,14 @@ flowchart LR
     IPTracker --> ReportGenerator[Console Markdown Report Formatter]
     StatusTracker --> ReportGenerator
     ErrorQueue --> ReportGenerator
+
+    style ReadlineInterface fill:#dbeafe,stroke:#1d4ed8
+    style RegexParser fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Memory Bounded Metrics Accumulation Flow
+## 2. Memory Bounded Metrics Accumulation Flow ($O(1)$ RAM)
 
 When processing millions of log lines, accumulating raw objects in array buffers will cause V8 out-of-memory crashes (`heap limit allocation failed`).
 
@@ -41,24 +46,24 @@ sequenceDiagram
     participant File as ReadStream (access.log)
     participant RL as Readline Stream Iterator
     participant Acc as Metrics Accumulator
-    participant Output as Console Report
+    participant Output as Console Summary Report
 
-    CLI->>File: Initiate log analysis
+    CLI->>File: Initiates log file analysis
     
-    loop Stream Line-by-Line (No Memory Inflation)
+    loop Stream Line-by-Line (Zero Memory Inflation)
         File->>RL: Chunk stream read
-        RL->>Acc: Process single line string
-        Acc->>Acc: Increment counter integers in fixed-size Hash Map
-        Note over Acc: Fixed-size RAM footprint regardless of 100 MB or 100 GB log size!
+        RL->>Acc: Passes single line string
+        Acc->>Acc: Increments counter integers in fixed-size Hash Map
+        note over Acc: Fixed-size RAM footprint regardless of 100 MB or 100 GB log size!
     end
 
     RL-->>Acc: Stream finished ('close' event)
-    Acc->>Output: Render summary metrics report & top IP stats
+    Acc->>Output: Renders summary metrics report & top IP stats
 ```
 
 ---
 
-## 3. Supported Log Format Specification (Combined Log Format)
+## 3. Supported Log Format Specification (Combined Access Log)
 
 The analyzer parses standard **Nginx / Apache Combined Access Log** format strings:
 
@@ -67,9 +72,23 @@ The analyzer parses standard **Nginx / Apache Combined Access Log** format strin
 10.0.0.12 - - [31/Aug/2026:14:32:11 +0000] "POST /api/v1/checkout HTTP/1.1" 500 128 "-" "PostmanRuntime/7.32"
 ```
 
+```mermaid
+flowchart TD
+    LogLine['192.168.1.50 - - [31/Aug/2026:14:32:10 +0000] "GET /api/v1/users HTTP/1.1" 200 4522'] --> MatchRegex[Regex Pattern Capture Groups]
+    
+    MatchRegex --> Group1["Group 1: IP Address ('192.168.1.50')"]
+    MatchRegex --> Group2["Group 2: Timestamp ('31/Aug/2026:14:32:10')"]
+    MatchRegex --> Group3["Group 3: HTTP Method ('GET')"]
+    MatchRegex --> Group4["Group 4: Request Path ('/api/v1/users')"]
+    MatchRegex --> Group5["Group 5: Status Code (200)"]
+
+    style LogLine fill:#fef3c7,stroke:#b45309
+    style MatchRegex fill:#dcfce7,stroke:#15803d
+```
+
 ---
 
-## 4. Production Streaming Log Analyzer Code
+## 4. Production Code Showcase: Complete Streaming Log Analyzer Engine
 
 ```javascript
 const fs = require("node:fs");
@@ -85,7 +104,7 @@ class StreamingLogAnalyzer {
     this.maxErrorBuffer = 10;
   }
 
-  // Combined Log Format Regex Matcher
+  // Combined Log Format Static Regex Matcher
   static LOG_REGEX = /^(\S+) \S+ \S+ \[([^\]]+)\] "(\S+) (\S+) \S+" (\d{3}) (\d+|-)/;
 
   async processLogFile(filePath) {
@@ -103,7 +122,7 @@ class StreamingLogAnalyzer {
       crlfDelay: Infinity
     });
 
-    // Stream lines asynchronously without loading entire file in RAM
+    // Stream lines asynchronously without loading entire file into RAM
     for await (const line of rl) {
       this._parseAndAccumulate(line);
     }
@@ -134,7 +153,7 @@ class StreamingLogAnalyzer {
     const currentIpCount = this.ipFrequencyMap.get(ipAddress) || 0;
     this.ipFrequencyMap.set(ipAddress, currentIpCount + 1);
 
-    // 3. Track Recent 5xx Server Errors (Bounded Queue)
+    // 3. Track Recent 5xx Server Errors (Bounded Ring Buffer)
     if (statusCode >= 500) {
       if (this.recentErrors.length >= this.maxErrorBuffer) {
         this.recentErrors.shift(); // Evict oldest error entry
@@ -183,7 +202,7 @@ class StreamingLogAnalyzer {
   }
 }
 
-// Demo Runner
+// Execution Demonstration
 async function runDemo() {
   const sampleLogPath = path.join(__dirname, "sample_access.log");
 
@@ -201,6 +220,7 @@ async function runDemo() {
 
   const analyzer = new StreamingLogAnalyzer();
   await analyzer.processLogFile(sampleLogPath);
+  if (fs.existsSync(sampleLogPath)) fs.unlinkSync(sampleLogPath); // Cleanup
 }
 
 runDemo();
@@ -214,4 +234,5 @@ runDemo();
 2. **Use Async Iterators (`for await (const line of rl)`)**: Streams automatically handle Libuv flow control and backpressure when parsing huge files.
 3. **Compile Regular Expressions Outside Processing Loops**: Define regex matchers as static class properties (`static LOG_REGEX = ...`) so V8 compiles the regex pattern once.
 4. **Always Set `crlfDelay: Infinity`**: Ensures consistent line splitting across cross-platform text files (`\r\n` vs `\n`).
+
 

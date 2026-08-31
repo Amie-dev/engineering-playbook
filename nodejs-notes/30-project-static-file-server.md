@@ -1,79 +1,85 @@
-# Module 30: Capstone Project — Production High-Performance Static Web Server
+# Module 30: Capstone Project — Production High-Performance Static Web Server Architecture
 
 ## Overview
 
 This capstone project implements a zero-dependency, production-ready **Static File Server** using native Node.js HTTP streams (`node:http`, `node:fs`, `node:path`, `node:zlib`, `node:crypto`).
 
-Key features include **Path Traversal Security Guards**, **Dynamic MIME-Type Resolution**, **ETag / `304 Not Modified` Conditional Caching**, **HTTP Byte-Range Partial Content Streaming** (for MP4 video/audio seeking), and **On-The-Fly Brotli/Gzip Stream Compression**.
+Key features include **Path Traversal Security Guards**, **Dynamic MIME-Type Resolution**, **ETag / `304 Not Modified` Conditional Caching**, **HTTP Byte-Range Partial Content Streaming** (for MP4 video/audio scrub seeking), and **On-The-Fly Brotli/Gzip Compression Streams**.
+
+Understanding **Static Request Processing Pipelines**, **Directory Traversal Attack Prevention (CWE-22)**, **ETag Revalidation Flows**, and **HTTP 206 Range Streaming** is essential.
 
 ---
 
-## 1. Request Processing Architecture
+## 1. Request Processing Architecture Pipeline
 
 ```mermaid
 flowchart TD
     ClientReq[Client HTTP GET /assets/app.js] --> PathGuard{Safe Path Check:<br/>resolvedPath.startsWith(PUBLIC_DIR)}
     
-    PathGuard -- No: Directory Traversal Attempt! --> 403[Return 403 Forbidden]
-    PathGuard -- Yes --> FileStat{fs.stat: File Exists?}
+    PathGuard -- "No: Traversal Attempt!" --> 403[Return 403 Forbidden]
+    PathGuard -- "Yes" --> FileStat{fs.stat: File Exists?}
 
-    FileStat -- No --> 404[Return 404 Not Found]
-    FileStat -- Yes --> ETagCheck{If-None-Match Header Matches File ETag?}
+    FileStat -- "No" --> 404[Return 404 Not Found]
+    FileStat -- "Yes" --> ETagCheck{If-None-Match Header Matches ETag?}
 
-    ETagCheck -- Yes: Unchanged --> 304[Return 304 Not Modified<br/>Zero Bytes Transferred]
-    ETagCheck -- No: File Changed --> RangeCheck{Request Contains 'Range' Header?}
+    ETagCheck -- "Yes: Unchanged" --> 304[Return 304 Not Modified<br/>Zero Body Bytes Transferred]
+    ETagCheck -- "No: File Changed" --> RangeCheck{Request Contains 'Range' Header?}
 
-    RangeCheck -- Yes: Byte Range --> 206[Send 206 Partial Content Stream]
-    RangeCheck -- No: Full File --> EncodingCheck{Accept-Encoding: br or gzip?}
+    RangeCheck -- "Yes: Byte Range" --> 206[Send 206 Partial Content Stream]
+    RangeCheck -- "No: Full File" --> EncodingCheck{Accept-Encoding: br or gzip?}
 
-    EncodingCheck -- Yes --> ZipStream[Stream via zlib.createBrotliCompress / createGzip]
-    EncodingCheck -- No --> RawStream[Stream raw file directly to HTTP res]
+    EncodingCheck -- "Yes" --> ZipStream[Stream via zlib.createBrotliCompress / createGzip]
+    EncodingCheck -- "No" --> RawStream[Stream raw file directly to HTTP res]
 
     ZipStream --> 200[200 OK Response]
     RawStream --> 200
+
+    style PathGuard fill:#fef3c7,stroke:#b45309
+    style 403 fill:#fee2e2,stroke:#dc2626
+    style 304 fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
 ## 2. Conditional Caching Sequence (`ETag` & `304 Not Modified`)
 
-Using **ETags** derived from file modified timestamps (`mtime`) and file sizes, clients can revalidate static assets without re-downloading unchanged files over the network.
+Using **ETags** derived from file modification timestamps (`mtime`) and file sizes, clients revalidate static assets without re-downloading unchanged binary payloads over the network:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Browser as Web Browser Client
     participant Server as Static File Server
-    participant Disk as Disk Storage
+    participant Disk as File Storage System
 
-    Note over Browser,Server: FIRST REQUEST (NO CACHE)
+    note over Browser,Server: FIRST REQUEST (CACHE MISS)
     Browser->>Server: GET /style.css
-    Server->>Disk: Read file stats (size: 4096, mtime: 1700000000)
-    Server->>Server: Generate ETag: "1000-65e0a000"
-    Server-->>Browser: 200 OK (Headers: ETag: "1000-65e0a000", Cache-Control: max-age=86400)
+    Server->>Disk: Reads file stats (size: 4096, mtime: 1700000000)
+    Server->>Server: Generates ETag: "1000-65e0a000"
+    Server-->>Browser: Transmits 200 OK (ETag: "1000-65e0a000", Cache-Control: max-age=86400)
 
-    Note over Browser,Server: SECOND REQUEST (CONDITIONAL REVALIDATION)
+    note over Browser,Server: SECOND REQUEST (CONDITIONAL REVALIDATION)
     Browser->>Server: GET /style.css (Header: If-None-Match: "1000-65e0a000")
     Server->>Disk: Stat /style.css
     Server->>Server: Calculated ETag matches If-None-Match!
-    Server-->>Browser: 304 Not Modified (No body payload sent!)
+    Server-->>Browser: Transmits 304 Not Modified (Zero body payload transferred!)
 ```
 
 ---
 
-## 3. Server Feature Matrix
+## 3. Server Feature Architectural Matrix
 
-| Static Server Feature | Native Node.js Modules Used | Purpose & Impact |
+| Static Server Capability | Core Node.js Modules Used | Technical Impact & Security Purpose |
 | :--- | :--- | :--- |
-| **Path Traversal Guard** | `node:path` (`path.resolve`, `startsWith`) | Prevents malicious attackers from fetching `/etc/passwd` via `GET /../../etc/passwd`. |
+| **Path Traversal Guard** | `node:path` (`path.resolve`, `startsWith`) | Prevents attackers from fetching `/etc/passwd` via `GET /../../etc/passwd`. |
 | **Dynamic MIME Types** | `node:path` (`path.extname`) | Maps file extensions (`.html`, `.css`, `.js`, `.png`) to proper `Content-Type` headers. |
-| **ETag Caching** | `node:crypto` / File Stat (`mtime`, `size`) | Returns `304 Not Modified` to eliminate redundant network bandwidth usage. |
+| **ETag Caching** | `node:crypto` / `fsp.stat` (`mtime`, `size`) | Returns `304 Not Modified` to eliminate redundant network bandwidth usage. |
 | **Range Requests** | HTTP Request `Range` Header Parsing | Serves `206 Partial Content` streams, enabling video/audio scrub seeking. |
 | **Stream Compression** | `node:zlib` (`createBrotliCompress`, `createGzip`) | Reduces text asset transmission sizes by 75%+ over the wire. |
 
 ---
 
-## 4. Production Static File Server Code
+## 4. Production Code Showcase: High-Performance Static Web Server
 
 ```javascript
 const http = require("node:http");
@@ -83,13 +89,13 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { pipeline } = require("node:stream/promises");
 
-const PORT = 8080;
+const PORT = process.env.PORT || 8080;
 const PUBLIC_DIR = path.resolve(__dirname, "public");
 
-// Ensure public directory and sample index.html exist
+// Ensure public directory and index.html file exist for demonstration
 if (!fs.existsSync(PUBLIC_DIR)) {
   fs.mkdirSync(PUBLIC_DIR, { recursive: true });
-  fs.writeFileSync(path.join(PUBLIC_DIR, "index.html"), "<h1>Production Static File Server Active!</h1>");
+  fs.writeFileSync(path.join(PUBLIC_DIR, "index.html"), "<h1>Production Static Web Server Active!</h1>");
 }
 
 const MIME_TYPES = {
@@ -196,7 +202,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Static File Server running at http://localhost:${PORT}`);
+  console.log(`=== STATIC FILE SERVER ACTIVE: http://localhost:${PORT} ===`);
 });
 ```
 
@@ -204,8 +210,9 @@ server.listen(PORT, () => {
 
 ## Key Production Takeaways
 
-1. **Always Enforce `targetFilePath.startsWith(PUBLIC_DIR)`**: Never trust `path.normalize()` alone. Always resolve the absolute path and verify it starts with your public root directory to prevent directory traversal attacks.
+1. **Always Enforce `targetFilePath.startsWith(PUBLIC_DIR)`**: Never trust `path.normalize()` alone. Always resolve the absolute path and verify it starts with your public root directory to prevent directory traversal attacks (CWE-22).
 2. **Support `304 Not Modified` via ETags**: Returning `304 Not Modified` saves massive bandwidth and server CPU work by letting client browsers use cached asset copies.
 3. **Handle `Accept-Ranges` for Video/Audio Assets**: Implementing byte range requests allows media players to stream video without loading entire 500 MB files into client memory.
 4. **Use `stream.pipeline` for Robust Cleanup**: Never use `.pipe()` without manual error listeners. Always use `stream.pipeline` to clean up file streams cleanly on client aborts.
+
 
