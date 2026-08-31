@@ -1,45 +1,130 @@
-# File 01: Vercel AI SDK Model Configuration (`src/lib/ai-config.ts`)
+# Module 01: Vercel AI SDK Multi-Provider Model Configuration (`src/lib/ai-config.ts`)
 
 ## Overview
-**`src/lib/ai-config.ts`** initializes standardized LLM provider instances using Vercel AI SDK provider adapters (**`@ai-sdk/openai`**, **`@ai-sdk/google`**).
+
+Hardcoding vendor-specific LLM SDK initialization calls directly inside API route handlers creates vendor lock-in and makes switching providers (e.g. from OpenAI `gpt-4o-mini` to Google Gemini `gemini-1.5-flash`) difficult. The **Model Configuration Module (`src/lib/ai-config.ts`)** leverages the **Vercel AI SDK (`ai`)** provider abstraction layer (**`@ai-sdk/openai`** and **`@ai-sdk/google`**) to export standardized model instances and a dynamic factory selector (`getModel(provider)`), enabling multi-provider fallback and runtime model switching.
+
+Understanding **Vercel AI SDK Provider Adapters**, **Model Instance Factories**, **Multi-Provider Fallback Logic**, and **Environment Variable Guards** is essential for AI application architecture.
 
 ---
 
-## 1. Multi-Provider Abstraction Layer
+## 1. Multi-Provider Abstraction Topology
 
 ```mermaid
-flowchart LR
-    AppConfig[src/lib/ai-config.ts] --> OpenAI["OpenAI Adapter (gpt-4o-mini)"]
-    AppConfig --> Gemini["Gemini Adapter (gemini-1.5-flash)"]
-    OpenAI --> UniversalAISDK[Vercel AI SDK Universal Stream Interface]
-    Gemini --> UniversalAISDK
+flowchart TD
+    RouteHandler["Next.js Route Handler (app/api/chat/route.ts)"] --> Selector["1. Call getModel(provider: 'openai' | 'google')"]
+
+    Selector --> FactoryChoice{"2. Select Target Provider"}
+
+    FactoryChoice -- "provider: 'openai'" --> OpenAIAdapter["3. OpenAI Provider Adapter<br/>(openai('gpt-4o-mini'))"]
+
+    FactoryChoice -- "provider: 'google'" --> GeminiAdapter["4. Google Gemini Adapter<br/>(google('gemini-1.5-flash'))"]
+
+    OpenAIAdapter & GeminiAdapter --> UniversalSDK["5. Vercel AI SDK Universal LanguageModelV1 Interface"]
+
+    UniversalSDK --> StreamEngine["6. Stream Completion Tokens to Client via streamText()"]
+
+    style UniversalSDK fill:#dbeafe,stroke:#1d4ed8
+    style StreamEngine fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Model Configuration Implementation (`src/lib/ai-config.ts`)
+## 2. Hardcoded SDK Instantiation vs. Vercel AI SDK Abstraction
+
+```mermaid
+flowchart TD
+    ProviderTask[Select LLM Engine for Application] --> AbstractionStrategy{SDK Integration Strategy}
+
+    AbstractionStrategy -- "Hardcoded Vendor SDK (Vendor Lock-In)" --> VendorSDK["Hardcoded Vendor SDK:<br/>- Custom API request/response code per vendor<br/>- Cannot switch to alternative model without rewriting route handlers<br/>- Inconsistent streaming interfaces"]
+
+    AbstractionStrategy -- "Vercel AI SDK Model Abstraction (RECOMMENDED)" --> VercelAbstraction["Vercel AI SDK Model Abstraction:<br/>- Unified `LanguageModelV1` interface for OpenAI & Google Gemini<br/>- Switch models by changing a single parameter (`getModel('google')`)<br/>- 100% Plug-and-play provider portability!"]
+
+    style VercelAbstraction fill:#dcfce7,stroke:#15803d
+    style VendorSDK fill:#fee2e2,stroke:#dc2626
+```
+
+### Model Provider Reference Matrix
+
+| Provider Key | Adapter Package | Default Model Instance | Technical Target Use Case |
+| :--- | :--- | :--- | :--- |
+| **`"openai"`** | `@ai-sdk/openai` | `openai("gpt-4o-mini")` | Fast, cost-efficient conversational completion. |
+| **`"google"`** | `@ai-sdk/google` | `google("gemini-1.5-flash")` | High-context, low-latency Flash completions. |
+
+---
+
+## 3. Asynchronous Model Instantiation Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Route as Route Handler (app/api/chat/route.ts)
+    participant Config as getModel() (ai-config.ts)
+    participant Provider as Vercel AI SDK Provider Instance
+
+    Route->>Config: getModel("google")
+    Config->>Config: Check process.env.GOOGLE_GENERATIVE_AI_API_KEY
+    
+    Config->>Provider: Instantiate google("gemini-1.5-flash")
+    Provider-->>Config: Return LanguageModelV1 Instance
+    
+    Config-->>Route: Return Configured Model Runnable
+```
+
+---
+
+## 4. Code Walkthrough (`src/lib/ai-config.ts`)
 
 ```typescript
 import { openai } from "@ai-sdk/openai";
 import { google } from "@ai-sdk/google";
+import { LanguageModelV1 } from "ai";
 
-// 1. OpenAI Model Provider Instance
+/**
+ * Standardized OpenAI Model Provider Instance
+ * Uses gpt-4o-mini for cost-efficient, low-latency text completions
+ */
 export const defaultModel = openai("gpt-4o-mini");
 
-// 2. Google Gemini Model Provider Instance
+/**
+ * Standardized Google Gemini Model Provider Instance
+ * Uses gemini-1.5-flash for high-context window completions
+ */
 export const geminiModel = google("gemini-1.5-flash");
 
-// 3. Dynamic Model Selector Helper
-export function getModel(provider: "openai" | "google" = "openai") {
-    if (provider === "google") {
-        return geminiModel;
+/**
+ * Dynamic Model Factory Function
+ * Returns the target model instance based on provider identifier string
+ * @param provider - Model provider string ("openai" | "google")
+ * @returns Configured LanguageModelV1 instance for Vercel AI SDK
+ */
+export function getModel(provider: "openai" | "google" = "openai"): LanguageModelV1 {
+  console.log(`⚡ [AI CONFIG] Instantiating LLM model provider: '${provider}'`);
+
+  if (provider === "google") {
+    const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+    if (!apiKey) {
+      console.warn("⚠️ [AI CONFIG WARNING] GOOGLE_GENERATIVE_AI_API_KEY missing. Falling back to OpenAI provider.");
+      return defaultModel;
     }
-    return defaultModel;
+    return geminiModel;
+  }
+
+  const openAiKey = process.env.OPENAI_API_KEY;
+  if (!openAiKey) {
+    console.warn("⚠️ [AI CONFIG WARNING] OPENAI_API_KEY missing in environment variables.");
+  }
+
+  return defaultModel;
 }
 ```
 
 ---
 
-## Key Takeaways
-1. Decouples application UI code from underlying LLM provider SDKs.
-2. Allows switching between OpenAI and Gemini by toggling a single string parameter.
+## Key Production Takeaways
+
+1. **Use Vercel AI SDK Provider Adapters**: Import official adapters (`@ai-sdk/openai`, `@ai-sdk/google`) to unify LLM model instantiations under the `LanguageModelV1` interface.
+2. **Export Dynamic Model Selector Functions**: Provide a factory function (`getModel(provider)`) to switch between OpenAI and Gemini models dynamically via API query parameters.
+3. **Include Graceful Fallback Guards**: Check for environment variables (`GOOGLE_GENERATIVE_AI_API_KEY`) and fall back to default providers if secondary API keys are missing.
+4. **Decouple API Routes from Provider Specifics**: Keep API route handlers clean by referencing exported model instances (`defaultModel`) directly.
+
