@@ -1,68 +1,179 @@
-# File 02: Tokens, Context Windows, and Cost Estimation
+# Module 02: Tokens, Context Windows, Prompt Caching, and Cost Optimization
 
 ## Overview
-LLMs do not process raw text directly; text is broken into **Tokens** using algorithms like BPE (Byte Pair Encoding). The **Context Window** defines the maximum token capacity (Input Prompt + Output Generation) an LLM can process simultaneously.
+
+Large Language Models process text as discrete numerical sequences called **Tokens** created via subword tokenization algorithms (e.g. **Byte-Pair Encoding (BPE)** or **tiktoken**). Every LLM operates within a fixed **Context Window Limit** (e.g. 128k to 2M tokens) representing the maximum total length of input prompt tokens plus output generated tokens.
+
+Understanding **Tokenization Ratios**, **Context Window Saturation & Needle-in-a-Haystack Retrieval**, **Prompt Caching Economics**, and **Granular API Cost Calculation** is critical for building economically viable agentic architectures.
 
 ---
 
-## 1. Token Estimation & Cost Architecture
+## 1. Tokenization Pipeline & Context Window Architecture
 
 ```mermaid
-graph TD
-    Text[Input Text String] --> BPE[Byte Pair Encoding Tokenizer]
-    BPE --> Count["Token Count (~4 characters per 1 English token)"]
+flowchart TD
+    RawText[Raw Input Text String] --> BPEEngine["1. Byte-Pair Encoding (tiktoken / SentencePiece)<br/>Splits text into subword fragments & punctuation"]
 
-    subgraph Cost Calculation Formula
-        InputCost["Input Tokens × Price per 1M Input Tokens"]
-        OutputCost["Output Tokens × Price per 1M Output Tokens"]
-        TotalCost["Total Cost = InputCost + OutputCost"]
+    BPEEngine --> TokenIDs["2. Array of Integer Token IDs<br/>[15496, 11, 318, 257, 4921]"]
+
+    subgraph Context Window Boundary (e.g., 128,000 Tokens)
+        TokenIDs --> SystemPrompt["System & User Prompt Tokens (Input Tier)"]
+        SystemPrompt --> ContextHistory["Conversation Memory History"]
+        ContextHistory --> ToolOutput["Tool Execution Payload Returns"]
+        ToolOutput --> MaxGenLimit["Max Output Completion Tokens (Output Tier: 4,096 - 16,384)"]
     end
+
+    MaxGenLimit --> APICall["LLM Provider API Engine"]
+
+    style BPEEngine fill:#dbeafe,stroke:#1d4ed8
+    style MaxGenLimit fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Token Estimation & API Cost Calculator Implementation
+## 2. Prompt Caching Mechanics & Cost Dynamics
+
+Modern LLM providers (Anthropic Claude, OpenAI, Google Gemini) offer **Prompt Caching**. When system prompts, schema definitions, or RAG contexts ($> 1,024$ tokens) are reused across agent loops, cached tokens receive a **$75\% - 90\%$ cost discount** and sub-100ms latency reduction:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Agent as Agentic Pipeline
+    participant API as LLM Provider Gateway
+    participant Cache as KV Prompt Cache Store
+
+    note over Agent,Cache: CALL 1: INITIAL PROMPT CACHE MISS
+    Agent->>API: POST /chat (System Prompt: 10,000 tokens + User Query 1)
+    API->>Cache: Check KV Cache for System Prompt Prefix
+    Cache-->>API: Cache MISS (0 tokens hit)
+    API->>Cache: Store System Prompt KV Cache (TTL 5 minutes)
+    API-->>Agent: Returns Response (Billed at 100% Full Input Price)
+
+    note over Agent,Cache: CALL 2: PROMPT CACHE HIT (SAME SESSION)
+    Agent->>API: POST /chat (Same System Prompt: 10,000 tokens + User Query 2)
+    API->>Cache: Check KV Cache for System Prompt Prefix
+    Cache-->>API: Cache HIT! (10,000 tokens matched)
+    API-->>Agent: Returns Response (Billed at 10% Cached Input Price! 90% Savings!)
+```
+
+### Commercial LLM Token Pricing & Context Window Matrix
+
+| Model Identifier | Context Window Limit | Max Output Limit | Input Price / 1M Tokens | Cached Input / 1M Tokens | Output Price / 1M Tokens |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Claude 3.5 Sonnet** | 200,000 Tokens | 8,192 Tokens | **$3.00** | **$0.30** ($90\%$ off) | **$15.00** |
+| **GPT-4o** | 128,000 Tokens | 16,384 Tokens | **$2.50** | **$1.25** ($50\%$ off) | **$10.00** |
+| **GPT-4o-mini** | 128,000 Tokens | 16,384 Tokens | **$0.15** | **$0.075** ($50\%$ off) | **$0.60** |
+| **Gemini 1.5 Pro** | 2,000,000 Tokens | 8,192 Tokens | **$1.25** ($< 128k$) | **$0.31** ($75\%$ off) | **$5.00** |
+
+---
+
+## 3. Context Degradation: Needle in a Haystack Performance
+
+```mermaid
+flowchart TD
+    ContextDepth[Context Window Depth %] --> Quality{Retrieval & Reasoning Accuracy}
+
+    Quality -- "0% - 25% (Start of Context)" --> High1["Near 100% Accuracy<br/>High attention weight on System Prompts & Instructions"]
+
+    Quality -- "25% - 75% (Middle of Context)" --> MiddleDegradation["Lost in the Middle Effect!<br/>Accuracy drops to 60-70% for details buried in deep context"]
+
+    Quality -- "75% - 100% (End of Context)" --> High2["Near 100% Accuracy<br/>High attention weight on recent user query & completion target"]
+
+    style High1 fill:#dcfce7,stroke:#15803d
+    style MiddleDegradation fill:#fee2e2,stroke:#dc2626
+    style High2 fill:#dcfce7,stroke:#15803d
+```
+
+---
+
+## 4. Practical Implementation Showcase: Production Cost & Token Counter Engine
 
 ```javascript
-class TokenCostCalculator {
-    constructor(pricingPerMillion) {
-        this.pricing = pricingPerMillion; // { inputPrice, outputPrice }
+class ProductionTokenCostCalculator {
+  constructor(modelPricingTable) {
+    this.pricingTable = modelPricingTable;
+  }
+
+  /**
+   * Fast rule-of-thumb character-based token estimator
+   * English: ~4 characters per token
+   * Code / JSON: ~2.5 characters per token
+   */
+  estimateTokens(text, contentType = "english") {
+    if (!text) return 0;
+    const charsPerToken = contentType === "code" || contentType === "json" ? 2.5 : 4.0;
+    return Math.ceil(text.length / charsPerToken);
+  }
+
+  /**
+   * Calculates granular API cost with prompt caching discounts
+   */
+  calculateCallCost({ model, inputTokens, outputTokens, cachedTokens = 0 }) {
+    const pricing = this.pricingTable[model];
+    if (!pricing) {
+      throw new Error(`Pricing model '${model}' not found in registry.`);
     }
 
-    // Heuristic rule-of-thumb token estimation: ~4 chars per token for English
-    estimateTokenCount(text) {
-        return Math.ceil(text.length / 4);
-    }
+    const nonCachedInput = Math.max(0, inputTokens - cachedTokens);
 
-    calculateCost(promptText, completionText) {
-        const inputTokens = this.estimateTokenCount(promptText);
-        const outputTokens = this.estimateTokenCount(completionText);
+    const baseInputCost = (nonCachedInput / 1_000_000) * pricing.inputPricePerM;
+    const cachedInputCost = (cachedTokens / 1_000_000) * (pricing.cachedInputPricePerM || pricing.inputPricePerM);
+    const outputCost = (outputTokens / 1_000_000) * pricing.outputPricePerM;
 
-        const inputCost = (inputTokens / 1_000_000) * this.pricing.inputPrice;
-        const outputCost = (outputTokens / 1_000_000) * this.pricing.outputPrice;
-        const totalCost = inputCost + outputCost;
+    const totalCostUSD = baseInputCost + cachedInputCost + outputCost;
 
-        return {
-            inputTokens,
-            outputTokens,
-            totalTokens: inputTokens + outputTokens,
-            totalCostUSD: totalCost.toFixed(6)
-        };
-    }
+    return {
+      model,
+      tokenBreakdown: {
+        totalInputTokens: inputTokens,
+        cachedInputTokens: cachedTokens,
+        nonCachedInputTokens: nonCachedInput,
+        outputTokens,
+        totalTokens: inputTokens + outputTokens
+      },
+      costBreakdown: {
+        baseInputCostUSD: Number(baseInputCost.toFixed(6)),
+        cachedInputCostUSD: Number(cachedInputCost.toFixed(6)),
+        outputCostUSD: Number(outputCost.toFixed(6)),
+        totalCostUSD: Number(totalCostUSD.toFixed(6))
+      }
+    };
+  }
 }
 
-// Pricing for Claude 3.5 Sonnet ($3 / 1M Input, $15 / 1M Output)
-const calculator = new TokenCostCalculator({ inputPrice: 3.0, outputPrice: 15.0 });
+// Enterprise Model Pricing Registry
+const PRICING_REGISTRY = {
+  "claude-3-5-sonnet": {
+    inputPricePerM: 3.0,
+    cachedInputPricePerM: 0.3,
+    outputPricePerM: 15.0
+  },
+  "gpt-4o": {
+    inputPricePerM: 2.5,
+    cachedInputPricePerM: 1.25,
+    outputPricePerM: 10.0
+  }
+};
 
-const prompt = "Analyze the system architecture of our microservices platform and summarize key risks.";
-const completion = "The primary risks include single point of failure in the API Gateway and lack of distributed tracing across services.";
+const costCalculator = new ProductionTokenCostCalculator(PRICING_REGISTRY);
 
-console.log("Cost Estimation Breakdown:", calculator.calculateCost(prompt, completion));
+// Simulation: 50,000 Token RAG Prompt with 40,000 Cached Tokens
+const simulation = costCalculator.calculateCallCost({
+  model: "claude-3-5-sonnet",
+  inputTokens: 50000,
+  outputTokens: 1200,
+  cachedTokens: 40000
+});
+
+console.log("Production Token & Cost Breakdown:", JSON.stringify(simulation, null, 2));
 ```
 
 ---
 
-## Key Takeaways
-1. **Rule of Thumb**: $1 \text{ Token} \approx 4 \text{ Characters}$ or $0.75 \text{ Words}$ in English.
-2. Output tokens are significantly more expensive than input tokens across provider APIs.
-3. Exceeding model **Context Windows** triggers truncated context or API error exceptions.
+## Key Production Takeaways
+
+1. **Output Tokens Cost $3\times - 5\times$ More Than Input Tokens**: Optimize prompts to request concise, structured JSON outputs rather than verbose multi-paragraph responses to minimize costs.
+2. **Leverage Prompt Caching for Agent System Prompts**: Design fixed system prompt prefixes exceeding $1,024$ tokens so LLM providers can cache the prefix across multi-turn agent loops, lowering input costs by up to $90\%$.
+3. **Beware the "Lost in the Middle" Effect**: Information placed in the center of long context windows ($50\%$ depth) suffers from reduced retrieval accuracy. Place critical instructions at the top (system prompt) or bottom (user query).
+4. **Enforce Token Budget Caps**: Always set explicit `max_tokens` limits on API requests to protect against runaway generation loops or recursive agent cost spikes.
+
