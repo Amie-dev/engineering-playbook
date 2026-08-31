@@ -1,4 +1,4 @@
-# Engineering Playbook 🚀
+# Engineering Playbook 
 
 Welcome to the **Engineering Playbook**, an exhaustive, production-grade guide, interactive curriculum, and technical reference repository for modern software engineering, distributed systems, system design, JavaScript/Node.js internals, and advanced Agentic AI systems.
 
@@ -12,39 +12,42 @@ The diagram below illustrates how the different engineering layers in this playb
 
 ```mermaid
 flowchart TD
-    subgraph Layer1["1. Core Language & Runtimes"]
-        JS_Notes["js-notes/<br/>ECMAScript Spec & Async"]
-        JS_Internals["js-internals/<br/>V8 Engine, AST & GC"]
-        DOM["js-dom/<br/>Web APIs & DOM Mechanics"]
+    subgraph Layer1["<font color='#0284c7'><b>1. Core Language & Runtimes</b></font>"]
+        JS_Notes["js-notes: ECMAScript Spec & Async"]
+        JS_Internals["js-internals: V8 Engine, AST & GC"]
+        DOM["js-dom: Web APIs & DOM Mechanics"]
     end
 
-    subgraph Layer2["2. Server Frameworks & Patterns"]
-        NodeJS["nodejs-notes/<br/>Event Loop & Streams"]
-        Express["express-notes/<br/>Middleware & REST APIs"]
-        Patterns["js-patterns/<br/>Creational, Structural & Behavioral"]
-        Testing["js-testing/<br/>Unit, Integration & E2E Testing"]
-        DSA["js-dsa/<br/>Algorithms & Data Structures"]
+    subgraph Layer2["<font color='#15803d'><b>2. Server Frameworks & Patterns</b></font>"]
+        NodeJS["nodejs-notes: Event Loop & Streams"]
+        Express["express-notes: Middleware & REST APIs"]
+        Patterns["js-patterns: Creational, Structural & Behavioral"]
+        Testing["js-testing: Unit, Integration & E2E Testing"]
+        DSA["js-dsa: Algorithms & Data Structures"]
     end
 
-    subgraph Layer3["3. Distributed Infrastructure"]
-        SystemDesign["system-design-notes/<br/>Scalability, Load Balancing, Caching & Queues"]
+    subgraph Layer3["<font color='#b45309'><b>3. Distributed Infrastructure</b></font>"]
+        SystemDesign["system-design-notes: Scalability, Load Balancing, Caching & Queues"]
     end
 
-    subgraph Layer4["4. Advanced Agentic AI Engineering"]
-        AI_Foundations["agentic-ai-notes/00-03:<br/>LLM Foundations, RAG & Vectors"]
-        AI_Agents["agentic-ai-notes/04-06:<br/>ReAct Loop, LangGraph & MCP"]
-        AI_MultiAgent["agentic-ai-notes/07-08:<br/>Multi-Agent Swarms & Next.js 15"]
-        AI_Gateway["agentic-ai-notes/09-production-patterns:<br/>Enterprise AI Proxy Gateway"]
+    subgraph Layer4["<font color='#6b21a8'><b>4. Advanced Agentic AI Engineering</b></font>"]
+        AI_Foundations["agentic-ai-notes/00-03: LLM Foundations, RAG & Vectors"]
+        AI_Agents["agentic-ai-notes/04-06: ReAct Loop, LangGraph & MCP"]
+        AI_MultiAgent["agentic-ai-notes/07-08: Multi-Agent Swarms & Next.js 15"]
+        AI_Gateway["agentic-ai-notes/09-production-patterns: Enterprise AI Proxy Gateway"]
     end
 
-    Layer1 --> Layer2
-    Layer2 --> Layer3
-    Layer3 --> Layer4
+    JS_Notes & JS_Internals & DOM --> NodeJS & Express
+    NodeJS & Express & Patterns & Testing & DSA --> SystemDesign
+    SystemDesign --> AI_Foundations
+    AI_Foundations --> AI_Agents
+    AI_Agents --> AI_MultiAgent
+    AI_MultiAgent --> AI_Gateway
 
-    style Layer1 fill:#e0f2fe,stroke:#0284c7
-    style Layer2 fill:#dcfce7,stroke:#15803d
-    style Layer3 fill:#fef3c7,stroke:#b45309
-    style Layer4 fill:#f3e8ff,stroke:#6b21a8
+    style Layer1 fill:#e0f2fe,stroke:#0284c7,color:#0284c7,stroke-width:2px
+    style Layer2 fill:#dcfce7,stroke:#15803d,color:#15803d,stroke-width:2px
+    style Layer3 fill:#fef3c7,stroke:#b45309,color:#b45309,stroke-width:2px
+    style Layer4 fill:#f3e8ff,stroke:#6b21a8,color:#6b21a8,stroke-width:2px
 ```
 
 ---
@@ -212,23 +215,23 @@ Select a structured track to guide your study through the playbook:
 
 ```mermaid
 flowchart TD
-    Start[Select Learning Goal] --> Track1[Track 1: Agentic AI Systems Engineering]
-    Start --> Track2[Track 2: Full-Stack JS & Node.js Engine Internals]
-    Start --> Track3[Track 3: Distributed System Design & Architecture]
+    Start["Select Learning Goal"] --> Track1["Track 1: Agentic AI Systems Engineering"]
+    Start --> Track2["Track 2: Full-Stack JS & Node.js Engine Internals"]
+    Start --> Track3["Track 3: Distributed System Design & Architecture"]
 
-    Track1 --> AI_1[agentic-ai-notes/00-foundations: LLM & RAG Theory]
-    AI_1 --> AI_2[agentic-ai-notes/01-03: Summarizer, Vector Search & Production RAG]
-    AI_2 --> AI_3[agentic-ai-notes/04-06: ReAct Agents, LangGraph & MCP Servers]
-    AI_3 --> AI_4[agentic-ai-notes/07-08: Multi-Agent Consensus Swarms & Next.js 15]
-    AI_4 --> AI_5[agentic-ai-notes/09-production-patterns: Enterprise AI Gateway Proxy]
+    Track1 --> AI_1["agentic-ai-notes/00-foundations: LLM & RAG Theory"]
+    AI_1 --> AI_2["agentic-ai-notes/01-03: Summarizer, Vector Search & Production RAG"]
+    AI_2 --> AI_3["agentic-ai-notes/04-06: ReAct Agents, LangGraph & MCP Servers"]
+    AI_3 --> AI_4["agentic-ai-notes/07-08: Multi-Agent Consensus Swarms & Next.js 15"]
+    AI_4 --> AI_5["agentic-ai-notes/09-production-patterns: Enterprise AI Gateway Proxy"]
 
-    Track2 --> JS_1[js-notes & js-internals: ECMAScript & V8 Compiler Pipeline]
-    JS_1 --> JS_2[nodejs-notes & express-notes: Event Loop, Streams & APIs]
-    JS_2 --> JS_3[js-dom, js-patterns & js-testing: Browser APIs & Test Engineering]
+    Track2 --> JS_1["js-notes & js-internals: ECMAScript & V8 Compiler Pipeline"]
+    JS_1 --> JS_2["nodejs-notes & express-notes: Event Loop, Streams & APIs"]
+    JS_2 --> JS_3["js-dom, js-patterns & js-testing: Browser APIs & Test Engineering"]
 
-    Track3 --> SD_1[system-design-notes: Protocols, Load Balancing & Caching]
-    SD_1 --> SD_2[system-design-notes: Databases, Sharding, Replication & Message Queues]
-    SD_2 --> SD_3[system-design-notes: Real-World Case Studies & Security Architecture]
+    Track3 --> SD_1["system-design-notes: Protocols, Load Balancing & Caching"]
+    SD_1 --> SD_2["system-design-notes: Databases, Sharding, Replication & Message Queues"]
+    SD_2 --> SD_3["system-design-notes: Real-World Case Studies & Security Architecture"]
 ```
 
 ---
@@ -239,10 +242,10 @@ Every single topic `.md` file across all 10 major directories is formatted accor
 
 ```mermaid
 flowchart LR
-    Part1[1. Theoretical Deep-Dive] --> Part2[2. 3 Visual Mermaid Diagrams]
-    Part2 --> Part3[3. Parameter & Spec Matrices]
-    Part3 --> Part4[4. Line-by-Line Code Walkthrough]
-    Part4 --> Part5[5. Key Production Takeaways]
+    Part1["1. Theoretical Deep-Dive"] --> Part2["2. 3 Visual Mermaid Diagrams"]
+    Part2 --> Part3["3. Parameter & Spec Matrices"]
+    Part3 --> Part4["4. Line-by-Line Code Walkthrough"]
+    Part4 --> Part5["5. Key Production Takeaways"]
 ```
 
 1. **Theoretical Deep-Dive & Mechanics**: Detailed, zero-hand-waving architectural explanations of technical concepts, design trade-offs, and runtime behavior.
