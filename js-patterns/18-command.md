@@ -1,102 +1,186 @@
-# File 18: The Command Pattern
+# Module 18: The Command Pattern — Request Encapsulation, Undo/Redo Stacks, and Macro Commands
 
 ## Overview
-The **Command Pattern** encapsulates a request/action as a standalone object containing all information necessary to perform that action later (target receiver, method, and parameters). This enables parameterizing methods, queuing commands, and supporting **Undo / Redo** operations.
+
+The **Command Pattern** is a Behavioral design pattern that encapsulates a request or action as a **standalone command object**.
+
+By packaging the receiver object, method name, and execution arguments inside a single object, the Command pattern decouples the object that invokes the command (**Invoker**) from the object that performs the work (**Receiver**).
+
+This pattern enables powerful application capabilities including **Dual-Stack Undo / Redo Engines**, **Command Queuing**, **Macro Commands** (composite sequence execution), and **Transactional Logs**.
 
 ---
 
-## 1. Command Architecture with Undo Stack
+## 1. Command Structural Architecture
 
 ```mermaid
 flowchart LR
-    Invoker[TextEditor Invoker] -->|execute(command)| CommandObj["AddTextCommand Object"]
-    CommandObj -->|execute() / undo()| Receiver["Document Receiver"]
-    Invoker -->|pushes to| History["Command History Stack (Undo/Redo)"]
+    Client[Client UI Button] -->|Creates| Cmd["Command Object<br/>+ execute()<br/>+ undo()"]
+    Client -->|Passes Command to| Invoker["EditorInvoker (History Manager)"]
+
+    Invoker -->|1. Pushes to History Stack<br/>2. Calls execute()| Cmd
+    Cmd -->|3. Mutates State| Receiver["TextDocument (Receiver Data Model)"]
+
+    style Cmd fill:#e0e7ff,stroke:#4338ca
 ```
 
 ---
 
-## 2. Text Editor with Undo/Redo Implementation
+## 2. Command Pattern Roles Taxonomy Matrix
+
+| Role | Responsibilities | Knowledge Boundaries |
+| :--- | :--- | :--- |
+| **Command Contract Interface** | Declares standard execution surface (`execute()`, `undo()`) | Abstract contract |
+| **Concrete Command** | Binds Receiver reference with parameters; implements `execute()` & `undo()` | Knows Receiver details and parameters |
+| **Receiver** | Performs actual business operations (e.g. `document.append()`, `db.delete()`) | Independent domain model |
+| **Invoker** | Triggers command execution; manages **Undo History Stack** & **Redo Stack** | Stores Command objects in history |
+
+---
+
+## 3. Code Showcase: Text Editor with Dual-Stack Undo / Redo
 
 ```javascript
-// Receiver: Holds underlying data state
-class TextDocument {
-    constructor() { this.text = ""; }
-    append(str) { this.text += str; }
-    delete(count) { this.text = this.text.slice(0, -count); }
+// 1. Receiver Class (Target Model containing domain state)
+class TextDocumentReceiver {
+  #content = "";
+
+  getContent() {
+    return this.#content;
+  }
+
+  insert(text, position) {
+    this.#content = this.#content.slice(0, position) + text + this.#content.slice(position);
+  }
+
+  delete(position, length) {
+    const deletedText = this.#content.slice(position, position + length);
+    this.#content = this.#content.slice(0, position) + this.#content.slice(position + length);
+    return deletedText;
+  }
 }
 
-// Command Contract Interface
+// 2. Abstract Command Contract
 class Command {
-    execute() {}
-    undo() {}
+  execute() { throw new Error("Method 'execute()' must be implemented"); }
+  undo() { throw new Error("Method 'undo()' must be implemented"); }
 }
 
-// Concrete Command: Append Text
-class AppendCommand extends Command {
-    constructor(document, textToAppend) {
-        super();
-        this.document = document;
-        this.textToAppend = textToAppend;
-    }
+// 3. Concrete Command A: Insert Text
+class InsertTextCommand extends Command {
+  #receiver;
+  #textToInsert;
+  #insertPosition;
 
-    execute() {
-        this.document.append(this.textToAppend);
-    }
+  constructor(receiver, textToInsert, insertPosition) {
+    super();
+    this.#receiver = receiver;
+    this.#textToInsert = textToInsert;
+    this.#insertPosition = insertPosition;
+  }
 
-    undo() {
-        this.document.delete(this.textToAppend.length);
-    }
+  execute() {
+    this.#receiver.insert(this.#textToInsert, this.#insertPosition);
+  }
+
+  undo() {
+    // Inverse Operation of Insert is Delete!
+    this.#receiver.delete(this.#insertPosition, this.#textToInsert.length);
+  }
 }
 
-// Invoker: Manages Execution and History Stacks
-class EditorInvoker {
-    constructor(document) {
-        this.document = document;
-        this.history = [];
-        this.redoStack = [];
+// 4. Invoker Class (Manages Execution & Dual Undo/Redo Stacks)
+class CommandInvoker {
+  #undoStack = [];
+  #redoStack = [];
+
+  executeCommand(command) {
+    if (!(command instanceof Command)) {
+      throw new TypeError("Must pass valid Command instance");
     }
 
-    executeCommand(command) {
-        command.execute();
-        this.history.push(command);
-        this.redoStack = []; // Clear redo stack on new action
+    command.execute();
+    this.#undoStack.push(command);
+    this.#redoStack.length = 0; // Mandatory: Clear Redo stack on new user action!
+
+    console.log(`[Invoker]: Executed command. Undo Stack depth: ${this.#undoStack.length}`);
+  }
+
+  undo() {
+    if (this.#undoStack.length === 0) {
+      console.warn("[Invoker]: Nothing to undo.");
+      return false;
     }
 
-    undo() {
-        const command = this.history.pop();
-        if (command) {
-            command.undo();
-            this.redoStack.push(command);
-        }
+    const command = this.#undoStack.pop();
+    command.undo();
+    this.#redoStack.push(command);
+
+    console.log(`[Invoker]: Undid command. Redo Stack depth: ${this.#redoStack.length}`);
+    return true;
+  }
+
+  redo() {
+    if (this.#redoStack.length === 0) {
+      console.warn("[Invoker]: Nothing to redo.");
+      return false;
     }
 
-    redo() {
-        const command = this.redoStack.pop();
-        if (command) {
-            command.execute();
-            this.history.push(command);
-        }
-    }
+    const command = this.#redoStack.pop();
+    command.execute();
+    this.#undoStack.push(command);
+
+    console.log(`[Invoker]: Redid command. Undo Stack depth: ${this.#undoStack.length}`);
+    return true;
+  }
 }
 
-const doc = new TextDocument();
-const editor = new EditorInvoker(doc);
+// Execution Demonstration
+const docReceiver = new TextDocumentReceiver();
+const invoker = new CommandInvoker();
 
-editor.executeCommand(new AppendCommand(doc, "Hello "));
-editor.executeCommand(new AppendCommand(doc, "World!"));
-console.log(doc.text); // "Hello World!"
+// 1. User Types "Hello "
+invoker.executeCommand(new InsertTextCommand(docReceiver, "Hello ", 0));
+console.log("Current Text:", docReceiver.getContent()); // "Hello "
 
-editor.undo();
-console.log(doc.text); // "Hello "
+// 2. User Types "World!"
+invoker.executeCommand(new InsertTextCommand(docReceiver, "World!", 6));
+console.log("Current Text:", docReceiver.getContent()); // "Hello World!"
 
-editor.redo();
-console.log(doc.text); // "Hello World!"
+// 3. User Presses Undo (Ctrl+Z)
+invoker.undo();
+console.log("After Undo:", docReceiver.getContent());  // "Hello "
+
+// 4. User Presses Redo (Ctrl+Y)
+invoker.redo();
+console.log("After Redo:", docReceiver.getContent());  // "Hello World!"
 ```
 
 ---
 
-## Key Takeaways
-1. Turns actions into **first-class objects**.
-2. Enables robust **Undo / Redo history stacks**, transaction logs, and macro recording.
-3. Decouples the object invoking an action from the object executing it.
+## 4. Undo / Redo Dual-Stack Flowchart
+
+```mermaid
+flowchart TD
+    UserAction[New User Command Action] --> ExecuteCmd[Execute Command]
+    ExecuteCmd --> PushUndo[Push Command to Undo Stack]
+    PushUndo --> ClearRedo["Clear Redo Stack! (redoStack.length = 0)"]
+
+    subgraph Dual Stack Mechanics
+        UndoAction[User Press Undo] --> PopUndo[Pop from Undo Stack]
+        PopUndo --> ExecUndo[Execute command.undo]
+        ExecUndo --> PushRedo[Push Command to Redo Stack]
+
+        RedoAction[User Press Redo] --> PopRedo[Pop from Redo Stack]
+        PopRedo --> ExecRedo[Execute command.execute]
+        ExecRedo --> PushUndo2[Push Command to Undo Stack]
+    end
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Package Actions as Objects**: Use the Command pattern when actions need to be saved, queued, scheduled, or passed as arguments into invoker UI controls.
+2. **Clear the Redo Stack on New User Actions**: Always wipe the `#redoStack` array when a new command is executed to prevent invalid history state branching.
+3. **Keep Commands Self-Contained**: Ensure each concrete Command captures all necessary parameters during constructor initialization so `.execute()` and `.undo()` require zero arguments.
+4. **Leverage Macro Commands for Composite Actions**: Combine multiple individual commands into a `MacroCommand` array to execute or undo entire batches of operations atomically.
+

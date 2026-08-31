@@ -1,91 +1,190 @@
-# File 23: Template Method and Visitor Patterns
+# Module 23: Template Method & Visitor Patterns — Invariant Workflow Skeletons and Double Dispatch AST Traversal
 
 ## Overview
-- The **Template Method Pattern** defines the skeleton of an algorithm in an abstract base class method, allowing subclasses to override specific steps without changing the overall structure.
-- The **Visitor Pattern** separates an algorithm from an object structure on which it operates, allowing you to add new operations to existing object structures without modifying their classes.
+
+This module explores two advanced Behavioral design patterns:
+1. **The Template Method Pattern**: Defines the invariant skeleton of an algorithm in a base class method, allowing subclasses to override specific step hooks without modifying the overall execution structure.
+2. **The Visitor Pattern**: Enables adding new operational algorithms to complex object hierarchies (e.g., AST syntax trees or complex document structures) without altering the target element classes, using **Double Dispatch (`accept(visitor)`)**.
+
+Understanding **Data Processing Pipelines**, **Babel/ESLint AST Visitors**, and **Double Dispatch** is essential.
 
 ---
 
-## 1. Template Method & Visitor Architecture
+## 1. Architectural Workflow & Double Dispatch Diagrams
 
 ```mermaid
 flowchart TD
-    subgraph Template Method Pattern
-        Base[DataMiner Base Class] --> Step1[openFile]
-        Base --> Step2["extractData() (Hook override)"]
-        Base --> Step3[closeFile]
+    subgraph Template Method Algorithm Skeleton
+        InvariableStart["mine() Template Method Skeleton"] --> Step1["1. openConnection() (Concrete Base)"]
+        InvariableStart --> Step2["2. extractRawData() (Abstract Subclass Hook)"]
+        InvariableStart --> Step3["3. parseData() (Concrete Base)"]
+        InvariableStart --> Step4["4. closeConnection() (Concrete Base)"]
     end
+```
 
-    subgraph Visitor Pattern
-        Element[Shop Element] -->|accept(visitor)| Visitor["RentVisitor Algorithm"]
+```mermaid
+flowchart LR
+    subgraph Visitor Pattern Double Dispatch
+        Element["Element (Node)<br/>+ accept(visitor)"] -->|1. Invokes accept(v)| Visitor["Visitor Subclass<br/>+ visitElementA(node)<br/>+ visitElementB(node)"]
+        Visitor -->|2. Double Dispatch Call| Element
     end
 ```
 
 ---
 
-## 2. Combined Template & Visitor Implementation
+## 2. Behavioral Patterns Comparison Matrix
+
+| Pattern Name | Architectural Intent | Modification Strategy | Primary Use Case |
+| :--- | :--- | :--- | :--- |
+| **Template Method** | Fixes algorithm skeleton in base class; subclasses override step hooks | **Subclassing / Polymorphism** | Invariant workflows (ETL pipelines, data mineworks) |
+| **Visitor Pattern** | Adds new operations to existing class hierarchies without mutating them | **Double Dispatch Composition** | AST parsers (Babel, ESLint), Compiler code generators |
+| **Strategy Pattern** | Encapsulates entire interchangeable algorithms | **Composition Interface** | Swapping algorithms dynamically at runtime |
+
+---
+
+## 3. Code Showcase: Data Mining Template Method & AST Node Visitor
 
 ```javascript
-// 1. TEMPLATE METHOD PATTERN: Data Mining Pipeline
-class DataMiner {
-    // Template Method defining step sequence
-    mine(path) {
-        this.openFile(path);
-        const rawData = this.extractData();
-        const parsed = this.parseData(rawData);
-        this.closeFile();
-        return parsed;
-    }
+// ==========================================
+// 1. TEMPLATE METHOD PATTERN IMPLEMENTATION
+// ==========================================
+class AbstractDataMiner {
+  // Skeleton Template Method: Controls exact step execution order!
+  mineData(filePath) {
+    console.log(`\n[DataMiner]: Starting data mining pipeline for '${filePath}'...`);
+    this.openFile(filePath);
+    const rawContent = this.extractRawData(); // Step Hook (Subclass Override!)
+    const parsedData = this.parseRawData(rawContent);
+    this.closeFile(filePath);
+    console.log("[DataMiner]: Mining pipeline complete.");
+    return parsedData;
+  }
 
-    openFile(path) { console.log(`Opening file at ${path}`); }
-    extractData() { throw new Error("Subclasses must implement extractData"); } // Hook step
-    parseData(raw) { return `Parsed [${raw}]`; }
-    closeFile() { console.log("Closing file connection"); }
+  // Base Concrete Steps
+  openFile(filePath) {
+    console.log(`  -> [Step 1]: File handle opened for '${filePath}'.`);
+  }
+  closeFile(filePath) {
+    console.log(`  -> [Step 4]: File handle closed for '${filePath}'.`);
+  }
+  parseRawData(rawText) {
+    console.log("  -> [Step 3]: Parsing raw content into JSON structure.");
+    return { payload: rawText.trim().toUpperCase() };
+  }
+
+  // Abstract Step Hook (MUST be overridden by subclasses!)
+  extractRawData() {
+    throw new Error("Subclasses must implement abstract method 'extractRawData()'");
+  }
 }
 
-class CSVDataMiner extends DataMiner {
-    extractData() { return "CSV_ROW1, CSV_ROW2"; }
+class CSVDataMiner extends AbstractDataMiner {
+  extractRawData() {
+    console.log("  -> [Step 2 (CSV Hook)]: Extracting comma-separated values...");
+    return "id,name,role\n101,Anita,Engineer";
+  }
 }
 
+// Client Execution: Template Method
 const csvMiner = new CSVDataMiner();
-console.log(csvMiner.mine("/data/report.csv"));
+const result = csvMiner.mineData("/var/data/users.csv");
+console.log("Mined Output:", result);
+```
 
-// 2. VISITOR PATTERN: External Audit Operation
-class Shop {
-    constructor(name, income) {
-        this.name = name;
-        this.income = income;
-    }
-    accept(visitor) { return visitor.visitShop(this); }
+```javascript
+// ==========================================
+// 2. VISITOR PATTERN IMPLEMENTATION (Double Dispatch AST Engine)
+// ==========================================
+
+// Element Class A: Variable Declaration AST Node
+class VariableDeclarationNode {
+  constructor(varName, varValue) {
+    this.varName = varName;
+    this.varValue = varValue;
+  }
+
+  // DOUBLE DISPATCH STEP 1: Accepts Visitor and passes self ('this')
+  accept(visitor) {
+    return visitor.visitVariableDeclaration(this);
+  }
 }
 
-class Market {
-    constructor(name, shops) {
-        this.name = name;
-        this.shops = shops;
-    }
-    accept(visitor) { return visitor.visitMarket(this); }
+// Element Class B: Function Declaration AST Node
+class FunctionDeclarationNode {
+  constructor(fnName, params) {
+    this.fnName = fnName;
+    this.params = params;
+  }
+
+  accept(visitor) {
+    return visitor.visitFunctionDeclaration(this);
+  }
 }
 
-// Visitor Class: Adds new Rent audit calculation algorithm without altering Shop/Market classes
-class TaxVisitor {
-    visitShop(shop) { return shop.income * 0.18; }
-    visitMarket(market) {
-        return market.shops.reduce((total, element) => total + element.accept(this), 0);
-    }
+// Visitor Interface 1: Code Generator Visitor (Compiles AST to JS String)
+class CodeGeneratorVisitor {
+  visitVariableDeclaration(node) {
+    return `const ${node.varName} = ${JSON.stringify(node.varValue)};`;
+  }
+  visitFunctionDeclaration(node) {
+    return `function ${node.fnName}(${node.params.join(", ")}) { /* body */ }`;
+  }
 }
 
-const market = new Market("Chandni Chowk", [
-    new Shop("Masala Store", 25000),
-    new Shop("Tea Stall", 8000)
-]);
+// Visitor Interface 2: Type Checker Visitor (Calculates Static Metrics)
+class TypeCheckerVisitor {
+  visitVariableDeclaration(node) {
+    console.log(`[TypeChecker]: Inspected variable declaration '${node.varName}' (Type: ${typeof node.varValue}).`);
+    return true;
+  }
+  visitFunctionDeclaration(node) {
+    console.log(`[TypeChecker]: Inspected function '${node.fnName}' with ${node.params.length} param(s).`);
+    return true;
+  }
+}
 
-const taxVisitor = new TaxVisitor();
-console.log(`Total Market Tax: ₹${market.accept(taxVisitor)}`); // Calculates ₹5940 tax
+// AST Tree Nodes Collection
+const astNodes = [
+  new VariableDeclarationNode("apiUrl", "https://api.domain.com/v1"),
+  new FunctionDeclarationNode("fetchUserData", ["userId", "authToken"])
+];
+
+// Instantiating Visitors
+const codeGenVisitor = new CodeGeneratorVisitor();
+const typeCheckVisitor = new TypeCheckerVisitor();
+
+console.log("\n=== VISITOR 1: TYPE CHECKER PASS ===");
+astNodes.forEach((node) => node.accept(typeCheckVisitor));
+
+console.log("\n=== VISITOR 2: CODE GENERATOR PASS ===");
+astNodes.forEach((node) => {
+  console.log(node.accept(codeGenVisitor));
+});
 ```
 
 ---
 
-## Key Takeaways
-1. **Template Method** defines invariant workflow skeletons while letting subclasses override variable steps.
-2. **Visitor Pattern** allows adding new behaviors to complex object hierarchies without mutating their underlying source code.
+## 4. Visitor Double Dispatch Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as AST Compiler
+    participant Node as VariableDeclarationNode
+    participant Visitor as CodeGeneratorVisitor
+
+    App->>Node: node.accept(visitor) (Dispatch 1: Poly call on Node)
+    Note over Node: Node identifies its own concrete type!
+    Node->>Visitor: visitor.visitVariableDeclaration(this) (Dispatch 2: Poly call on Visitor)
+    Visitor-->>App: Returns compiled JS string "const apiUrl = ..."
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Use Template Method for Invariant Algorithms**: Implement a Template Method when the overall steps of an algorithm are fixed, but individual steps differ across formats (e.g., CSV, PDF, XML mineworkers).
+2. **Use Visitor to Extend Complex Data Hierarchies**: Use Visitor when you need to add operations to a complex object tree (such as AST nodes, document DOMs, or composite UI structures) without modifying element classes.
+3. **Understand Double Dispatch**: Double dispatch ensures the correct operation is called based on both the type of the element (`Node`) and the type of the visitor (`Visitor`).
+4. **Beware of Class Hierarchy Changes**: If element node classes change frequently, adding new element classes requires updating every Visitor interface subclass.
+

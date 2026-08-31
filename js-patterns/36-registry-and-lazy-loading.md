@@ -1,74 +1,160 @@
-# File 36: Registry and Lazy Loading Patterns
+# Module 36: Service Registry & Lazy Loading — Dynamic Imports, On-Demand Instantiation, and Cold-Start Optimization
 
 ## Overview
-- The **Service Registry Pattern** acts as a central lookup directory for resolving dependencies or components by name.
-- **Lazy Loading** defers the instantiation of modules, database connections, or UI components until the exact moment they are first accessed.
+
+The **Service Registry Pattern** acts as a centralized directory locator where application components register and resolve dependencies by string keys or symbols.
+
+When combined with **Lazy Loading** (deferred instantiation and dynamic ES module imports `import()`), the Service Registry prevents heavy upfront memory allocations during application startup, accelerating application cold-start times.
+
+Understanding **Lazy Factory Functions**, **Dynamic ES Module Chunking**, and **Service Locator vs. Dependency Injection trade-offs** is essential.
 
 ---
 
 ## 1. Lazy Service Registry Architecture
 
 ```mermaid
-flowchart LR
-    Client[Client Code] -->|get('AnalyticsService')| Registry["Service Registry"]
-    Registry --> Check{Already Instantiated?}
-    Check -- Yes --> ReturnCached[Return Active Instance]
-    Check -- No --> LazyInit["Invoke Lazy Factory () => new AnalyticsService()"]
-    LazyInit --> Store[Cache Instance & Return]
+flowchart TD
+    AppInit["Application Startup<br/>(Lightweight Registry Registration)"] --> Reg["Service Registry<br/>(Stores () => import('./heavyModule.js'))"]
+
+    Reg -.->|Zero Memory Allocated Upfront!| WaitingState["Waiting for Client Request..."]
+
+    WaitingState --> ClientCall["Client requests registry.get('PaymentGateway')"]
+    ClientCall --> Check{Is Instance Cached?}
+    
+    Check -- Yes --> Cached["Return Cached Instance (O(1) Map lookup)"]
+    Check -- No --> ExecFactory["Execute Lazy Factory () => import(...)"]
+    
+    ExecFactory --> CacheInstance["Instantiate & Cache in Registry"]
+    CacheInstance --> ReturnInstance["Return Fresh Component Instance"]
 ```
 
 ---
 
-## 2. Lazy Service Registry Implementation
+## 2. Startup Strategies Comparison Matrix
+
+| Strategy | Memory Allocation | Startup Speed | Execution Mechanics |
+| :--- | :--- | :--- | :--- |
+| **Eager Service Registry** | High upfront memory footprint | Slow initial boot | Instantiates all services upfront during app startup |
+| **Lazy Factory Registry** | Zero memory allocated upfront | Fast initial boot | Defers instantiation until first `.get(key)` call |
+| **Dynamic ES Import (`import()`)** | Micro-chunked bundle size | Blazing fast web boot | Fetches JS code bundle over network only when accessed |
+
+---
+
+## 3. Code Showcase: Lazy Service Registry & Dynamic Module Loader
 
 ```javascript
-class ServiceRegistry {
-    constructor() {
-        this.factories = new Map();
-        this.instances = new Map();
+// ==========================================
+// 1. LAZY SERVICE REGISTRY WITH CACHING
+// ==========================================
+class ProductionServiceRegistry {
+  #factories = new Map();
+  #instances = new Map();
+
+  // Register lazy factory wrapper (NOT instantiated during registration!)
+  registerLazy(serviceKey, factoryFn) {
+    if (typeof factoryFn !== "function") {
+      throw new TypeError(`Factory for service '${serviceKey}' must be a function.`);
+    }
+    this.#factories.set(serviceKey, factoryFn);
+    console.log(`[ServiceRegistry]: Registered lazy factory for '${serviceKey}'.`);
+    return this;
+  }
+
+  // On-demand Resolution
+  async get(serviceKey) {
+    // 1. Return cached instance if already instantiated
+    if (this.#instances.has(serviceKey)) {
+      return this.#instances.get(serviceKey);
     }
 
-    // Register factory for lazy initialization
-    registerLazy(name, factoryFn) {
-        this.factories.set(name, factoryFn);
+    // 2. Lookup registered factory
+    const factoryFn = this.#factories.get(serviceKey);
+    if (!factoryFn) {
+      throw new Error(`[ServiceRegistry]: Service '${serviceKey}' is not registered.`);
     }
 
-    get(name) {
-        // Return existing instance if instantiated
-        if (this.instances.has(name)) {
-            return this.instances.get(name);
-        }
+    console.log(`\n[ServiceRegistry]: Instantiating '${serviceKey}' ON DEMAND...`);
+    const startTime = Date.now();
 
-        const factory = this.factories.get(name);
-        if (!factory) throw new Error(`Service '${name}' not registered`);
+    // 3. Execute lazy factory (Supports async factories & dynamic import()!)
+    const instance = await factoryFn();
+    const duration = Date.now() - startTime;
 
-        console.log(`[LAZY REGISTRY] Instantiating service '${name}' on demand...`);
-        const instance = factory();
-        this.instances.set(name, instance);
-        return instance;
-    }
+    console.log(`[ServiceRegistry]: Successfully instantiated '${serviceKey}' in ${duration} ms.`);
+    this.#instances.set(serviceKey, instance);
+    return instance;
+  }
+
+  hasInstance(serviceKey) {
+    return this.#instances.has(serviceKey);
+  }
 }
 
-const registry = new ServiceRegistry();
+// ==========================================
+// 2. SIMULATED HEAVY MODULE DEPENDENCIES
+// ==========================================
+const HeavyPostgresPool = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 200)); // Simulate DB socket connection
+  return { type: "PostgresConnection", status: "CONNECTED" };
+};
 
-// Registrations use lazy functions (NOT instantiated yet!)
-registry.registerLazy("Database", () => ({ connection: "ACTIVE_POSTGRES_POOL" }));
-registry.registerLazy("Mailer", () => ({ smtp: "smtp.example.com" }));
+const HeavyMLRecommendationEngine = async () => {
+  await new Promise((resolve) => setTimeout(resolve, 500)); // Simulate tensor model loading
+  return { type: "TensorFlowModel", status: "LOADED" };
+};
 
-console.log("Registry initialized with zero memory footprint.");
+// Execution Demonstration
+const registry = new ProductionServiceRegistry();
 
-// First lookup triggers instantiation
-const db = registry.get("Database");
-console.log(db.connection);
+// 1. Register heavy services lazily (Zero startup latency!)
+registry
+  .registerLazy("Database", async () => await HeavyPostgresPool())
+  .registerLazy("RecommendationEngine", async () => await HeavyMLRecommendationEngine());
 
-// Second lookup returns cached instance
-const db2 = registry.get("Database");
-console.log(db === db2); // true
+console.log("\nApp boot complete. DB loaded?", registry.hasInstance("Database")); // false!
+
+// 2. First access triggers on-demand allocation:
+(async () => {
+  console.log("\n=== FIRST ACCESS: DATABASE ===");
+  const db1 = await registry.get("Database");
+  console.log("DB Connection Payload:", db1);
+
+  console.log("\n=== SECOND ACCESS: DATABASE (CACHED INSTANT LOOKUP) ===");
+  const db2 = await registry.get("Database");
+  console.log("Is Identical Instance?", db1 === db2); // true!
+})();
 ```
 
 ---
 
-## Key Takeaways
-1. **Service Registry** provides central key-based lookup for services.
-2. **Lazy Loading** avoids heavy up-front startup delays by deferring instantiation until first access.
-3. Combines lazy evaluation with singleton caching.
+## 4. Dynamic Import Resolution Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application Route Handler
+    participant Reg as ServiceRegistry
+    participant Factory as Lazy Async Factory
+    participant Mod as Remote ES Module File
+
+    App->>Reg: get("AnalyticsEngine")
+    Reg->>Reg: Checks instance map -> Cache Miss!
+    
+    Reg->>Factory: Executes () => import('./analytics.js')
+    Factory->>Mod: Dynamic HTTP / Disk fetch of JS file
+    Mod-->>Factory: Returns Module Exports
+    
+    Factory-->>Reg: Instantiated AnalyticsEngine
+    Reg->>Reg: Stores instance in Map cache
+    Reg-->>App: Returns AnalyticsEngine instance!
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Use Lazy Registries to Maximize Cold-Start Performance**: Defer heavy database socket creation or machine learning model loads until routes using them are explicitly invoked.
+2. **Combine Dynamic `import()` with Registries**: In web applications, use `const module = await import('./module.js')` inside lazy registry factories to code-split JS bundles.
+3. **Avoid Service Locator Anti-Patterns**: Avoid passing the Service Registry instance deep into domain classes; instead, use the Registry inside IoC containers or root composition roots.
+4. **Cache Instantiated Singletons**: Always cache instantiated services in a internal `Map` after the first factory call to prevent duplicate instantiation overhead.
+

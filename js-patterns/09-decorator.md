@@ -1,73 +1,135 @@
-# File 09: The Decorator Pattern
+# Module 09: The Decorator Pattern — Dynamic Behavior Extension, Functional Wrappers, and Class Decorators
 
 ## Overview
-The **Decorator Pattern** dynamically attaches new behaviors or responsibilities to an object at runtime without altering its underlying structure or using complex class inheritance hierarchies.
+
+The **Decorator Pattern** is a Structural design pattern that allows dynamically attaching new behaviors or responsibilities to an object at runtime without altering its original source code or creating bloated inheritance hierarchies.
+
+Without Decorators, extending object behavior using subclassing leads to **Combinatorial Class Explosion** (e.g. creating `CoffeeWithMilk`, `CoffeeWithMilkAndSugar`, `CoffeeWithMilkAndSugarAndWhip`, requiring $2^N$ subclass permutations for $N$ features).
+
+In JavaScript, Decorators can be implemented using **Object Wrapping Layers**, **Higher-Order Decorator Functions**, or standard **TC39 Decorator Proposals (`@decorator`)**.
 
 ---
 
-## 1. Decorator Architecture
+## 1. Class Explosion vs. Decorator Composition Architecture
 
 ```mermaid
-flowchart LR
-    BaseObj[Base Coffee Object ₹50] --> Dec1["MilkDecorator (+₹20)"]
-    Dec1 --> Dec2["SugarDecorator (+₹10)"]
-    Dec2 --> Result["Final Cost: ₹80"]
+flowchart TD
+    subgraph Inheritance Class Explosion (BAD)
+        Base[Base Coffee] --> C1[CoffeeWithMilk]
+        Base --> C2[CoffeeWithSugar]
+        Base --> C3[CoffeeWithMilkAndSugar]
+        Base --> C4[CoffeeWithMilkAndSugarAndWhip]
+    end
+
+    subgraph Decorator Composition (GOOD)
+        BaseObj[Basic Coffee Object] --> DecMilk[withMilk Decorator]
+        DecMilk --> DecSugar[withSugar Decorator]
+        DecSugar --> DecWhip[withWhip Decorator]
+    end
 ```
 
 ---
 
-## 2. Dynamic Decorator Implementation
+## 2. Decorator Wrapper Execution Pipeline
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Client Code
+    participant Whip as WhipDecorator (Outer Wrapper)
+    participant Milk as MilkDecorator (Inner Wrapper)
+    participant Coffee as BasicCoffee (Core Target)
+
+    Client->>Whip: cost()
+    Whip->>Milk: cost()
+    Milk->>Coffee: cost()
+    Coffee-->>Milk: Returns 50
+    Milk-->>Whip: Returns 50 + 20 (Milk) = 70
+    Whip-->>Client: Returns 70 + 30 (Whip) = 100
+```
+
+---
+
+## 3. Code Showcase: Object Wrapper vs. Functional HOF Decorator
 
 ```javascript
-// Base Component Interface
-class BasicCoffee {
-    cost() { return 50; }
-    description() { return "Basic Coffee"; }
+// 1. Core Component Interface & Base Implementation
+class BaseService {
+  execute(data) {
+    return `Processed payload: ${data}`;
+  }
 }
 
-// Decorator Wrapper Function 1: Milk
-function withMilk(coffee) {
-    const originalCost = coffee.cost();
-    const originalDesc = coffee.description();
+// 2. Functional HOF Decorator: Logging Add-On
+function withLogging(targetService) {
+  const originalExecute = targetService.execute;
 
-    coffee.cost = () => originalCost + 20;
-    coffee.description = () => `${originalDesc} + Milk`;
-    return coffee;
+  targetService.execute = function (data) {
+    console.log(`[LOG - BEFORE]: Executing service with input: ${data}`);
+    const result = originalExecute.call(this, data); // Delegate call
+    console.log(`[LOG - AFTER ]: Result produced: ${result}`);
+    return result;
+  };
+
+  return targetService;
 }
 
-// Decorator Wrapper Function 2: Sugar
-function withSugar(coffee) {
-    const originalCost = coffee.cost();
-    const originalDesc = coffee.description();
+// 3. Functional HOF Decorator: Performance Timing Add-On
+function withPerformanceTiming(targetService) {
+  const originalExecute = targetService.execute;
 
-    coffee.cost = () => originalCost + 10;
-    coffee.description = () => `${originalDesc} + Sugar`;
-    return coffee;
+  targetService.execute = function (data) {
+    const t0 = performance.now();
+    const result = originalExecute.call(this, data);
+    const t1 = performance.now();
+    console.log(`[PERF TIMING]: Operation duration: ${(t1 - t0).toFixed(4)} ms`);
+    return result;
+  };
+
+  return targetService;
 }
 
-// Decorator Wrapper Function 3: Whip
-function withWhip(coffee) {
-    const originalCost = coffee.cost();
-    const originalDesc = coffee.description();
+// Composition Execution: Chaining Multiple Decorators Dynamically!
+let myService = new BaseService();
 
-    coffee.cost = () => originalCost + 30;
-    coffee.description = () => `${originalDesc} + Whip`;
-    return coffee;
-}
+// Dynamically decorate with Logging and Performance Timing!
+myService = withLogging(myService);
+myService = withPerformanceTiming(myService);
 
-// Dynamic Decoration Chaining
-let myCoffee = new BasicCoffee();
-myCoffee = withMilk(myCoffee);
-myCoffee = withSugar(myCoffee);
-myCoffee = withWhip(myCoffee);
-
-console.log(myCoffee.description()); // "Basic Coffee + Milk + Sugar + Whip"
-console.log(`Total: ₹${myCoffee.cost()}`); // Total: ₹110
+myService.execute("ORDER_PAYLOAD_9001");
 ```
 
 ---
 
-## Key Takeaways
-1. Decorators **add functionality dynamically** at runtime.
-2. Avoids combinatorial class explosion (e.g. `CoffeeWithMilkAndSugarAndWhip`).
-3. Follows the **Single Responsibility Principle** by splitting feature add-ons into wrapper functions.
+## 4. TC39 / TypeScript Class Method Decorators (`@decorator`)
+
+Modern ECMAScript / TypeScript provides native decorator syntax (`@decorator`) for annotating class methods and properties at compile/evaluation time:
+
+```javascript
+// Method Decorator Simulation (TC39 Specification Signature)
+function readonly(target, propertyKey, descriptor) {
+  descriptor.writable = false; // Prevents overriding method at runtime
+  return descriptor;
+}
+
+class UserAccount {
+  constructor(name) {
+    this.name = name;
+  }
+
+  // @readonly
+  getUserID() {
+    return `ID-${this.name.toUpperCase()}`;
+  }
+}
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Use Decorators Over Subclassing for Add-On Behaviors**: Decorators allow combining features flexibly at runtime rather than creating dozens of rigid subclasses.
+2. **Preserve Method Signatures in Decorators**: Ensure decorator wrappers maintain identical method parameters and return types so calling code is unaffected.
+3. **Keep Decorators Focused on Single Responsibilities**: Follow the Single Responsibility Principle by writing small, focused decorators (e.g. `withLogging`, `withCaching`, `withMetrics`).
+4. **Order of Decoration Matters**: Be mindful of execution ordering when stacking multiple decorators (e.g., executing authentication before caching vs. caching before authentication).
+

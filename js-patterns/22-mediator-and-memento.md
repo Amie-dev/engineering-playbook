@@ -1,106 +1,206 @@
-# File 22: Mediator and Memento Patterns
+# Module 22: Mediator & Memento Patterns — Centralized Coordination and Encapsulated State Snapshots
 
 ## Overview
-- The **Mediator Pattern** restricts direct communication between objects, forcing them to collaborate solely via a central mediator object. This reduces direct dependencies between objects.
-- The **Memento Pattern** captures and externalizes an object's internal state so that it can be restored to this state later without violating encapsulation.
+
+This module covers two complementary Behavioral design patterns:
+1. **The Mediator Pattern**: Centralizes complex communication between multiple peer objects (**Colleagues**), replacing $N:M$ direct mesh dependencies with a single $1:N$ central hub.
+2. **The Memento Pattern**: Captures and externalizes an object's internal state snapshot without violating encapsulation, allowing the object (**Originator**) to be restored to a previous state later.
+
+Understanding **Chat Room Mediators**, **Air Traffic Controllers**, and **Immutable Memento Snapshots** is essential.
 
 ---
 
-## 1. Mediator & Memento Architecture
+## 1. Architectural Overview Diagrams
 
 ```mermaid
 flowchart TD
-    subgraph Mediator Pattern
-        UserA[User A] <--> Mediator["ChatRoom Mediator"] <--> UserB[User B]
+    subgraph Mesh Dependencies Without Mediator (BAD: N x M Chaos)
+        Col1[Colleague A] <--> Col2[Colleague B]
+        Col2 <--> Col3[Colleague C]
+        Col3 <--> Col1
+        Col1 <--> Col4[Colleague D]
     end
 
-    subgraph Memento Pattern
-        Editor[Editor State] -->|createMemento()| Memento["Memento Snapshot"]
-        Caretaker[History Caretaker] -->|restores from| Memento
+    subgraph Centralized Hub With Mediator (GOOD: Clean 1:N Hub)
+        UserA[Colleague A] <--> Hub["Central Mediator Hub"]
+        UserB[Colleague B] <--> Hub
+        UserC[Colleague C] <--> Hub
     end
+```
+
+```mermaid
+flowchart LR
+    subgraph Memento State Snapshot Roles
+        Originator["Originator (State Owner)<br/>- state = 'Active'<br/>- createMemento()<br/>- restore(memento)"]
+        Memento["Memento Object<br/>Object.freeze({ state })"]
+        Caretaker["Caretaker (History Stack)<br/>- history = []"]
+    end
+
+    Originator -->|1. Produces| Memento
+    Caretaker -->|2. Stores| Memento
+    Caretaker -->|3. Feeds back| Originator
 ```
 
 ---
 
-## 2. Combined Mediator & Memento Implementation
+## 2. Mediator vs. Observer vs. Facade Comparison Matrix
+
+| Pattern Name | Architectural Goal | Communication Direction | Encapsulation & Role |
+| :--- | :--- | :--- | :--- |
+| **Mediator Pattern** | Centralizes communication between peer objects | **Bidirectional** (Colleague $\leftrightarrow$ Mediator) | Prevents tight mesh coupling between peers |
+| **Observer Pattern** | Notifies subscribers when state mutates | **Unidirectional** (Subject $\to$ Observers) | 1-to-N event broadcasting |
+| **Facade Pattern** | Simplifies complex multi-class subsystems | **Unidirectional** (Client $\to$ Facade $\to$ Subsystem) | Unified entry point over subsystem |
+
+---
+
+## 3. Code Showcase: Combined Chat Mediator & Text Memento Snapshot
 
 ```javascript
-// MEMENTO PATTERN: Encapsulates state snapshots
-class TextMemento {
-    constructor(content) {
-        this.state = content;
-        Object.freeze(this); // Immutable snapshot
-    }
+// 1. MEMENTO PATTERN: Immutable State Snapshot Contract
+class MementoSnapshot {
+  #state;
+  #timestamp;
+
+  constructor(stateData) {
+    this.#state = structuredClone(stateData); // Deep copy snapshot state!
+    this.#timestamp = new Date().toISOString();
+    Object.freeze(this); // Guarantee absolute immutability!
+  }
+
+  getState() {
+    return this.#state;
+  }
+
+  get timestamp() {
+    return this.#timestamp;
+  }
 }
 
-// MEDIATOR PATTERN: Centralized ChatRoom
+// 2. MEDIATOR PATTERN: Centralized Chat Room Hub
 class ChatRoomMediator {
-    constructor() {
-        this.users = new Map();
-    }
+  #colleagues = new Map();
 
-    register(user) {
-        this.users.set(user.name, user);
-        user.mediator = this;
-    }
+  registerColleague(user) {
+    this.#colleagues.set(user.name, user);
+    user.setMediator(this);
+    console.log(`[ChatRoomMediator]: Registered '${user.name}' to chat session.`);
+  }
 
-    send(message, senderName, receiverName) {
-        if (receiverName) {
-            const recipient = this.users.get(receiverName);
-            if (recipient) recipient.receive(message, senderName);
-        } else {
-            // Broadcast
-            this.users.forEach((user, name) => {
-                if (name !== senderName) user.receive(message, senderName);
-            });
-        }
+  sendDirectMessage(message, senderName, recipientName) {
+    const recipient = this.#colleagues.get(recipientName);
+    if (!recipient) {
+      console.warn(`[ChatRoomMediator]: Delivery failed. User '${recipientName}' not found.`);
+      return false;
     }
+    recipient.receiveMessage(message, senderName);
+    return true;
+  }
 }
 
-// User Component
-class ChatUser {
-    constructor(name) {
-        this.name = name;
-        this.mediator = null;
-        this.lastMessage = "";
-    }
+// 3. ORIGINATOR & COLLEAGUE CLASS: Chat Participant
+class ChatParticipant {
+  #draftMessage = "";
 
-    send(message, recipient) {
-        this.lastMessage = message;
-        this.mediator.send(message, this.name, recipient);
-    }
+  constructor(name) {
+    this.name = name;
+    this.mediator = null;
+  }
 
-    receive(message, sender) {
-        console.log(`[${this.name}'s Screen] From ${sender}: ${message}`);
-    }
+  setMediator(mediator) {
+    this.mediator = mediator;
+  }
 
-    // Memento Creation & Restoration
-    createSnapshot() {
-        return new TextMemento(this.lastMessage);
-    }
+  typeMessage(text) {
+    this.#draftMessage = text;
+  }
 
-    restore(memento) {
-        this.lastMessage = memento.state;
-        console.log(`[${this.name}] Restored state to: '${this.lastMessage}'`);
+  sendMessage(recipientName) {
+    if (!this.mediator) throw new Error("Participant has no registered mediator hub.");
+    console.log(`[${this.name}]: Sending message to '${recipientName}'...`);
+    this.mediator.sendDirectMessage(this.#draftMessage, this.name, recipientName);
+  }
+
+  receiveMessage(message, senderName) {
+    console.log(`[${this.name}'s Screen]: From ${senderName}: "${message}"`);
+  }
+
+  // MEMENTO PATTERN METHODS: Create & Restore Snapshots!
+  createMemento() {
+    console.log(`[${this.name}]: Saved Memento snapshot: "${this.#draftMessage}"`);
+    return new MementoSnapshot({ draft: this.#draftMessage });
+  }
+
+  restoreFromMemento(memento) {
+    if (!(memento instanceof MementoSnapshot)) {
+      throw new TypeError("Invalid Memento snapshot instance");
     }
+    const restored = memento.getState();
+    this.#draftMessage = restored.draft;
+    console.log(`[${this.name}]: Restored draft state to: "${this.#draftMessage}" at ${memento.timestamp}`);
+  }
+
+  get draft() {
+    return this.#draftMessage;
+  }
 }
 
-const chatRoom = new ChatRoomMediator();
-const priya = new ChatUser("Priya");
-const rajesh = new ChatUser("Rajesh");
+// Execution Demonstration
+const mediatorHub = new ChatRoomMediator();
 
-chatRoom.register(priya);
-chatRoom.register(rajesh);
+const participantA = new ChatParticipant("Anita");
+const participantB = new ChatParticipant("Vikram");
 
-priya.send("Hello Rajesh!", "Rajesh"); // Direct routed message via Mediator
-const snapshot = priya.createSnapshot(); // Saved Memento
+mediatorHub.registerColleague(participantA);
+mediatorHub.registerColleague(participantB);
 
-priya.send("Accidental typo text", "Rajesh");
-priya.restore(snapshot); // Restored state via Memento!
+// 1. Participant A types message & saves Memento snapshot
+participantA.typeMessage("Version 1: Meeting at 3 PM");
+const savedDraftMemento = participantA.createMemento(); // Saved Memento #1
+
+// 2. Participant A modifies draft accidentally
+participantA.typeMessage("Version 2: Accidental typo text!!!");
+
+// 3. Participant A restores draft state from Memento
+participantA.restoreFromMemento(savedDraftMemento);
+
+// 4. Participant A sends restored draft via Mediator Hub
+participantA.sendMessage("Vikram");
 ```
 
 ---
 
-## Key Takeaways
-1. **Mediator** prevents many-to-many direct object references by routing through a centralhub.
-2. **Memento** creates immutable state snapshots for **Undo/Restore capabilities** without exposing internal object properties.
+## 4. Combined Execution Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Client Code
+    participant UserA as Anita (Originator / Colleague)
+    participant Hub as ChatRoomMediator Hub
+    participant UserB as Vikram (Colleague)
+    participant Mem as MementoSnapshot
+
+    App->>UserA: typeMessage("Hello")
+    App->>UserA: createMemento()
+    UserA->>Mem: new MementoSnapshot({ draft: "Hello" })
+    Mem-->>App: Returns Memento Instance Pointer
+
+    App->>UserA: typeMessage("Typo text!")
+    App->>UserA: restoreFromMemento(Mem)
+    UserA->>Mem: getState()
+    Mem-->>UserA: Restores draft to "Hello"
+
+    App->>UserA: sendMessage("Vikram")
+    UserA->>Hub: sendDirectMessage("Hello", "Anita", "Vikram")
+    Hub->>UserB: receiveMessage("Hello", "Anita")
+```
+
+---
+
+## Key Production Takeaways
+
+1. **Use Mediator to Eliminate Mesh Dependencies**: Implement a Mediator when multiple peer objects communicate in a complex many-to-many web, simplifying dependencies to a $1:N$ central hub.
+2. **Use Memento for Immutable State Checkpoints**: Implement Memento when an application requires snapshot, undo, or rollback checkpoints without exposing private instance fields to the caretaker.
+3. **Freeze Memento Instances**: Call `Object.freeze(this)` inside the Memento constructor to guarantee snapshots cannot be mutated after creation.
+4. **Decouple Originator from Caretaker**: Ensure the Caretaker (history manager) simply holds Memento object references without inspecting or modifying their internal snapshot payload.
+
