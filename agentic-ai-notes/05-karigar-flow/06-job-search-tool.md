@@ -1,51 +1,170 @@
-# File 06: Job Search Tool (`src/tools/job-search.js`)
+# Module 06: Job Search Tool & Catalog Matching (`src/tools/job-search.js`)
 
 ## Overview
-The **Job Search Tool** queries an active job openings catalog (`data/jobs.json`), filtering for role titles and matching required skills against the candidate's target job roles.
+
+After extracting a candidate's technical skills and target roles, the workflow must query open job positions to find suitable matches. The **Job Search Tool (`src/tools/job-search.js`)** queries an enterprise job openings catalog (`data/jobs.json`), executing a **Dual-Filter Matching & Overlap Ranking Algorithm** that filters openings by role title compatibility and ranks matches based on candidate skill overlap scores.
+
+Understanding **Job Catalog JSON Schemas**, **Role Title Substring Matching**, **Skill Intersection Overlap Scoring**, and **Sorted Result Envelopes** is essential for matching engines.
 
 ---
 
-## 1. Job Matching Algorithm
+## 1. Job Search Matching Topology
 
 ```mermaid
 flowchart TD
-    Catalog[jobs.json Job Catalog] --> FilterRole{Title matches Target Roles?}
-    FilterRole -- Yes --> CalcOverlap[Calculate Skill Overlap Count]
-    FilterRole -- No --> Skip[Skip Job]
-    CalcOverlap --> Rank[Rank Jobs by Overlap Score]
-    Rank --> Matches[Return Top Matching Jobs Array]
+    CandidateInput[Candidate Skills & Target Roles] --> CatalogLoad["1. Load Open Jobs Catalog (data/jobs.json)"]
+
+    CatalogLoad --> TitleFilter{"2. Role Title Substring Matcher<br/>(title.includes(targetRole))"}
+
+    TitleFilter -- "Title Match True" --> SkillOverlap["3. Calculate Skill Overlap Score<br/>Count candidate skills in job.requiredSkills"]
+
+    TitleFilter -- "Title Match False" --> SkillFallback{"4. Skill Fallback Matcher<br/>(Do candidate skills overlap requiredSkills?)"}
+
+    SkillFallback -- "Skill Overlap > 0" --> SkillOverlap
+
+    SkillFallback -- "No Overlap" --> RejectJob[Discard Job from Candidates Array]
+
+    SkillOverlap --> RankSort["5. Rank Jobs Descending by Overlap Score<br/>(matches.sort((a, b) => scoreB - scoreA))"]
+
+    RankSort --> ReturnMatches[6. Return Ranked Job Array to search_jobs Node]
+
+    style CatalogLoad fill:#dbeafe,stroke:#1d4ed8
+    style ReturnMatches fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Job Search Implementation (`src/tools/job-search.js`)
+## 2. Unfiltered Keyword Search vs. Overlap-Ranked Matching
+
+```mermaid
+flowchart TD
+    SearchQuery[Job Matching Search Pass] --> SearchStrategy{Search Strategy}
+
+    SearchStrategy -- "Unfiltered Keyword Search (Naive)" --> NaiveSearch["Unfiltered Keyword Search:<br/>- Returns unsorted job listings<br/>- High risk of recommending junior roles to senior candidates<br/>- Poor match accuracy"]
+
+    SearchStrategy -- "Overlap-Ranked Matching (RECOMMENDED)" --> RankedSearch["Overlap-Ranked Matching:<br/>- Filters by role title + skill overlap intersection<br/>- Ranks candidates' highest-scoring jobs first<br/>- 100% Relevant recommendations!"]
+
+    style RankedSearch fill:#dcfce7,stroke:#15803d
+    style NaiveSearch fill:#fee2e2,stroke:#dc2626
+```
+
+### Job Catalog Item JSON Schema Reference
+
+| Property Name | Data Type | Sample Catalog Value | Technical Purpose |
+| :--- | :--- | :--- | :--- |
+| **`id`** | `String` | `"job_101"` | Unique job opening identifier. |
+| **`title`** | `String` | `"Senior Full Stack Engineer"` | Official job opening title. |
+| **`company`** | `String` | `"Acme Tech Solutions"` | Hiring organization name. |
+| **`requiredSkills`** | `Array<String>` | `["Node.js", "React", "Docker"]` | Array of mandatory technical skills. |
+| **`experienceYears`**| `Number` | `3` | Minimum years of experience required. |
+
+---
+
+## 3. Asynchronous Job Search Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Node as Node: search_jobs
+    participant Tool as searchJobs(skills, targetRoles)
+    participant Catalog as data/jobs.json Catalog
+
+    Node->>Tool: searchJobs(["JavaScript", "Node.js", "React"], ["Full Stack Engineer"])
+    Tool->>Catalog: Read jobs dataset (4 open listings)
+    
+    Tool->>Tool: Filter by title substring & skill overlap
+    Tool->>Tool: Compute overlap scores -> Job 1 (3 skills), Job 2 (1 skill)
+    Tool->>Tool: Sort matches descending by score
+
+    Tool-->>Node: Return Array of 2 Ranked Job Objects
+```
+
+---
+
+## 4. Code Walkthrough (`src/tools/job-search.js`)
 
 ```javascript
-import jobsData from "../data/jobs.json" assert { type: "json" };
+import fs from "fs";
+import path from "path";
 
-export function searchJobs(candidateSkills, targetRoles) {
-    const skillsLower = candidateSkills.map(s => s.toLowerCase());
-    const rolesLower = targetRoles.map(r => r.toLowerCase());
+// Load static job catalog JSON
+const jobsFilePath = path.join(process.cwd(), "agentic-ai-notes/05-karigar-flow/data/jobs.json");
 
-    const matches = jobsData.filter(job => {
-        const titleMatch = rolesLower.some(role => job.title.toLowerCase().includes(role));
-        const skillMatch = job.requiredSkills.some(req => skillsLower.includes(req.toLowerCase()));
-        return titleMatch || skillMatch;
-    });
+/**
+ * Searches and ranks job catalog openings matching candidate skills and target roles
+ * @param {Array<string>} candidateSkills - Candidate extracted skill tokens
+ * @param {Array<string>} targetRoles - Candidate target job role titles
+ * @returns {Array<Object>} Ranked array of matched job objects
+ */
+export function searchJobs(candidateSkills = [], targetRoles = []) {
+  if (!Array.isArray(candidateSkills) || !Array.isArray(targetRoles)) {
+    throw new Error("[JOB SEARCH ERROR] Candidate skills and target roles must be arrays.");
+  }
 
-    // Score jobs by skill overlap count
-    matches.sort((a, b) => {
-        const scoreA = a.requiredSkills.filter(s => skillsLower.includes(s.toLowerCase())).length;
-        const scoreB = b.requiredSkills.filter(s => skillsLower.includes(s.toLowerCase())).length;
-        return scoreB - scoreA;
-    });
+  // Read job catalog dataset
+  let jobsCatalog = [];
+  try {
+    const rawData = fs.readFileSync(jobsFilePath, "utf-8");
+    jobsCatalog = JSON.parse(rawData);
+  } catch (err) {
+    console.warn("⚠️ [JOB SEARCH] Could not read jobs.json from disk. Using fallback in-memory catalog.");
+    jobsCatalog = getFallbackJobsCatalog();
+  }
 
-    return matches;
+  const skillsLower = candidateSkills.map((s) => String(s).toLowerCase());
+  const rolesLower = targetRoles.map((r) => String(r).toLowerCase());
+
+  console.log(`🔍 [JOB SEARCH] Searching catalog (${jobsCatalog.length} total listings) for roles: [${targetRoles.join(", ")}]...`);
+
+  // Step 1: Filter jobs matching title or having skill overlap
+  const matchedJobs = jobsCatalog.filter((job) => {
+    const titleMatch = rolesLower.some((role) => job.title.toLowerCase().includes(role));
+    const skillMatch = job.requiredSkills.some((req) => skillsLower.includes(req.toLowerCase()));
+    return titleMatch || skillMatch;
+  });
+
+  // Step 2: Calculate skill overlap score & rank descending
+  matchedJobs.sort((a, b) => {
+    const scoreA = a.requiredSkills.filter((s) => skillsLower.includes(s.toLowerCase())).length;
+    const scoreB = b.requiredSkills.filter((s) => skillsLower.includes(s.toLowerCase())).length;
+    return scoreB - scoreA;
+  });
+
+  console.log(`✅ [JOB SEARCH SUCCESS] Found ${matchedJobs.length} matching job openings.`);
+  return matchedJobs;
+}
+
+/**
+ * In-memory fallback catalog for offline testing
+ */
+function getFallbackJobsCatalog() {
+  return [
+    {
+      id: "job_101",
+      title: "Senior Full Stack Engineer",
+      company: "Acme Tech",
+      location: "Remote",
+      requiredSkills: ["Node.js", "React", "MongoDB", "Docker", "TypeScript"],
+      experienceYears: 4
+    },
+    {
+      id: "job_102",
+      title: "Backend Developer",
+      company: "CloudScale Inc",
+      location: "Bengaluru",
+      requiredSkills: ["Node.js", "Express", "MongoDB", "PostgreSQL"],
+      experienceYears: 3
+    }
+  ];
 }
 ```
 
 ---
 
-## Key Takeaways
-1. Scores job openings based on candidate skill overlap count.
-2. Serves as step 2 in the recruitment workflow pipeline.
+## Key Production Takeaways
+
+1. **Rank Results via Skill Overlap Intersections**: Calculate the intersection of candidate skills and job requirements to rank job openings descending by relevance.
+2. **Support Flexible Substring Role Matching**: Use lowercase substring checking (`title.toLowerCase().includes(role)`) to match varied job title formats.
+3. **Handle File System I/O Resiliently**: Fall back to in-memory datasets (`getFallbackJobsCatalog`) if external catalog files cannot be read.
+4. **Isolate Search Logic in Pure Functions**: Implement `searchJobs` as a synchronous pure function to keep execution predictable and easy to test.
+
