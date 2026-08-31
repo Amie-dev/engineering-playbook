@@ -1,86 +1,211 @@
-# File 30: Capstone Project — High-Performance Static Web Server
+# Module 30: Capstone Project — Production High-Performance Static Web Server
 
 ## Overview
-This project implements a **High-Performance Static File Server** using raw Node.js `http`, `fs`, `path`, and `zlib` modules, supporting dynamic MIME-type detection, stream piping, and Gzip compression.
+
+This capstone project implements a zero-dependency, production-ready **Static File Server** using native Node.js HTTP streams (`node:http`, `node:fs`, `node:path`, `node:zlib`, `node:crypto`).
+
+Key features include **Path Traversal Security Guards**, **Dynamic MIME-Type Resolution**, **ETag / `304 Not Modified` Conditional Caching**, **HTTP Byte-Range Partial Content Streaming** (for MP4 video/audio seeking), and **On-The-Fly Brotli/Gzip Stream Compression**.
 
 ---
 
-## 1. Static File Server Request Processing Flow
+## 1. Request Processing Architecture
 
 ```mermaid
 flowchart TD
-    Client[Browser GET Request /index.html] --> Server[Node.js HTTP Server]
-    Server --> PathCheck{File Exists?}
-    PathCheck -- No --> 404[Return 404 Not Found]
-    PathCheck -- Yes --> StreamFile[Create Read Stream]
+    ClientReq[Client HTTP GET /assets/app.js] --> PathGuard{Safe Path Check:<br/>resolvedPath.startsWith(PUBLIC_DIR)}
     
-    StreamFile --> CompressCheck{Client Supports Gzip?}
-    CompressCheck -- Yes --> GzipPipe[Pipe through zlib.createGzip]
-    CompressCheck -- No --> RawPipe[Pipe directly to res Writable Stream]
-    
-    GzipPipe --> Response[Send 200 OK Response]
-    RawPipe --> Response
+    PathGuard -- No: Directory Traversal Attempt! --> 403[Return 403 Forbidden]
+    PathGuard -- Yes --> FileStat{fs.stat: File Exists?}
+
+    FileStat -- No --> 404[Return 404 Not Found]
+    FileStat -- Yes --> ETagCheck{If-None-Match Header Matches File ETag?}
+
+    ETagCheck -- Yes: Unchanged --> 304[Return 304 Not Modified<br/>Zero Bytes Transferred]
+    ETagCheck -- No: File Changed --> RangeCheck{Request Contains 'Range' Header?}
+
+    RangeCheck -- Yes: Byte Range --> 206[Send 206 Partial Content Stream]
+    RangeCheck -- No: Full File --> EncodingCheck{Accept-Encoding: br or gzip?}
+
+    EncodingCheck -- Yes --> ZipStream[Stream via zlib.createBrotliCompress / createGzip]
+    EncodingCheck -- No --> RawStream[Stream raw file directly to HTTP res]
+
+    ZipStream --> 200[200 OK Response]
+    RawStream --> 200
 ```
 
 ---
 
-## 2. Static Web Server Implementation
+## 2. Conditional Caching Sequence (`ETag` & `304 Not Modified`)
+
+Using **ETags** derived from file modified timestamps (`mtime`) and file sizes, clients can revalidate static assets without re-downloading unchanged files over the network.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Browser as Web Browser Client
+    participant Server as Static File Server
+    participant Disk as Disk Storage
+
+    Note over Browser,Server: FIRST REQUEST (NO CACHE)
+    Browser->>Server: GET /style.css
+    Server->>Disk: Read file stats (size: 4096, mtime: 1700000000)
+    Server->>Server: Generate ETag: "1000-65e0a000"
+    Server-->>Browser: 200 OK (Headers: ETag: "1000-65e0a000", Cache-Control: max-age=86400)
+
+    Note over Browser,Server: SECOND REQUEST (CONDITIONAL REVALIDATION)
+    Browser->>Server: GET /style.css (Header: If-None-Match: "1000-65e0a000")
+    Server->>Disk: Stat /style.css
+    Server->>Server: Calculated ETag matches If-None-Match!
+    Server-->>Browser: 304 Not Modified (No body payload sent!)
+```
+
+---
+
+## 3. Server Feature Matrix
+
+| Static Server Feature | Native Node.js Modules Used | Purpose & Impact |
+| :--- | :--- | :--- |
+| **Path Traversal Guard** | `node:path` (`path.resolve`, `startsWith`) | Prevents malicious attackers from fetching `/etc/passwd` via `GET /../../etc/passwd`. |
+| **Dynamic MIME Types** | `node:path` (`path.extname`) | Maps file extensions (`.html`, `.css`, `.js`, `.png`) to proper `Content-Type` headers. |
+| **ETag Caching** | `node:crypto` / File Stat (`mtime`, `size`) | Returns `304 Not Modified` to eliminate redundant network bandwidth usage. |
+| **Range Requests** | HTTP Request `Range` Header Parsing | Serves `206 Partial Content` streams, enabling video/audio scrub seeking. |
+| **Stream Compression** | `node:zlib` (`createBrotliCompress`, `createGzip`) | Reduces text asset transmission sizes by 75%+ over the wire. |
+
+---
+
+## 4. Production Static File Server Code
 
 ```javascript
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
-const zlib = require("zlib");
+const http = require("node:http");
+const fs = require("node:fs");
+const fsp = require("node:fs/promises");
+const path = require("node:path");
+const zlib = require("node:zlib");
+const { pipeline } = require("node:stream/promises");
 
 const PORT = 8080;
-const PUBLIC_DIR = path.join(__dirname, "public");
+const PUBLIC_DIR = path.resolve(__dirname, "public");
+
+// Ensure public directory and sample index.html exist
+if (!fs.existsSync(PUBLIC_DIR)) {
+  fs.mkdirSync(PUBLIC_DIR, { recursive: true });
+  fs.writeFileSync(path.join(PUBLIC_DIR, "index.html"), "<h1>Production Static File Server Active!</h1>");
+}
 
 const MIME_TYPES = {
-    ".html": "text/html",
-    ".css": "text/css",
-    ".js": "application/javascript",
-    ".json": "application/json",
-    ".png": "image/png"
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".mp4": "video/mp4"
 };
 
-const server = http.createServer((req, res) => {
-    let safePath = path.normalize(req.url).replace(/^(\.\.[\/\\])+/, "");
-    if (safePath === "/") safePath = "/index.html";
+const server = http.createServer(async (req, res) => {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405, { "Content-Type": "text/plain" });
+    return res.end("405 Method Not Allowed");
+  }
 
-    const filePath = path.join(PUBLIC_DIR, safePath);
-    const ext = path.extname(filePath).toLowerCase();
+  // 1. Path Traversal Security Validation
+  let safePath = path.normalize(req.url).replace(/^(\.\.[\/\\])+/, "");
+  if (safePath === "/") safePath = "/index.html";
+
+  const targetFilePath = path.resolve(PUBLIC_DIR, `.${safePath}`);
+
+  // CRITICAL SECURITY GUARD: Verify target file resides strictly INSIDE PUBLIC_DIR
+  if (!targetFilePath.startsWith(PUBLIC_DIR)) {
+    res.writeHead(403, { "Content-Type": "text/plain" });
+    return res.end("403 Forbidden: Path Traversal Denied");
+  }
+
+  try {
+    const stats = await fsp.stat(targetFilePath);
+
+    if (stats.isDirectory()) {
+      res.writeHead(403, { "Content-Type": "text/plain" });
+      return res.end("403 Directory Listing Forbidden");
+    }
+
+    const ext = path.extname(targetFilePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || "application/octet-stream";
 
-    fs.stat(filePath, (err, stats) => {
-        if (err || !stats.isFile()) {
-            res.writeHead(404, { "Content-Type": "text/plain" });
-            return res.end("404 Not Found");
-        }
+    // 2. Generate ETag Header (Derived from size and mtime)
+    const etag = `W/"${stats.size.toString(16)}-${stats.mtimeMs.toString(16)}"`;
+    
+    // Check Conditional If-None-Match Header
+    if (req.headers["if-none-match"] === etag) {
+      res.writeHead(304, { "ETag": etag, "Cache-Control": "public, max-age=86400" });
+      return res.end();
+    }
 
-        const acceptEncoding = req.headers["accept-encoding"] || "";
-        const fileStream = fs.createReadStream(filePath);
+    // Common Headers
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("ETag", etag);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.setHeader("Accept-Ranges", "bytes");
 
-        if (acceptEncoding.includes("gzip")) {
-            res.writeHead(200, {
-                "Content-Type": contentType,
-                "Content-Encoding": "gzip"
-            });
-            fileStream.pipe(zlib.createGzip()).pipe(res);
-        } else {
-            res.writeHead(200, { "Content-Type": contentType });
-            fileStream.pipe(res);
-        }
-    });
+    // 3. Handle HTTP Byte-Range Requests (Media Streaming 206 Partial Content)
+    const rangeHeader = req.headers.range;
+    if (rangeHeader && rangeHeader.startsWith("bytes=")) {
+      const parts = rangeHeader.replace(/bytes=/, "").split("-");
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : stats.size - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${stats.size}`,
+        "Content-Length": chunkSize
+      });
+
+      const rangeStream = fs.createReadStream(targetFilePath, { start, end });
+      return await pipeline(rangeStream, res);
+    }
+
+    // 4. Content Negotiation Compression (Brotli / Gzip for text assets)
+    const acceptEncoding = req.headers["accept-encoding"] || "";
+    const fileStream = fs.createReadStream(targetFilePath);
+
+    const isCompressibleText = contentType.startsWith("text/") || contentType.includes("javascript") || contentType.includes("json");
+
+    if (isCompressibleText && acceptEncoding.includes("br")) {
+      res.setHeader("Content-Encoding", "br");
+      res.writeHead(200);
+      await pipeline(fileStream, zlib.createBrotliCompress(), res);
+    } else if (isCompressibleText && acceptEncoding.includes("gzip")) {
+      res.setHeader("Content-Encoding", "gzip");
+      res.writeHead(200);
+      await pipeline(fileStream, zlib.createGzip(), res);
+    } else {
+      res.setHeader("Content-Length", stats.size);
+      res.writeHead(200);
+      await pipeline(fileStream, res);
+    }
+
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("404 Not Found");
+    } else {
+      res.writeHead(500, { "Content-Type": "text/plain" });
+      res.end("500 Internal Server Error");
+    }
+  }
 });
 
 server.listen(PORT, () => {
-    console.log(`Static Web Server running at http://localhost:${PORT}`);
+  console.log(`Static File Server running at http://localhost:${PORT}`);
 });
 ```
 
 ---
 
-## Key Takeaways
-1. Demonstrates streaming static files directly off disk using **`fs.createReadStream()`** and **`stream.pipe()`**.
-2. Dynamically compresses text responses with **`zlib.createGzip()`** based on client `Accept-Encoding` headers.
-3. Sanitizes user input paths with **`path.normalize()`** to prevent directory traversal security attacks.
+## Key Production Takeaways
+
+1. **Always Enforce `targetFilePath.startsWith(PUBLIC_DIR)`**: Never trust `path.normalize()` alone. Always resolve the absolute path and verify it starts with your public root directory to prevent directory traversal attacks.
+2. **Support `304 Not Modified` via ETags**: Returning `304 Not Modified` saves massive bandwidth and server CPU work by letting client browsers use cached asset copies.
+3. **Handle `Accept-Ranges` for Video/Audio Assets**: Implementing byte range requests allows media players to stream video without loading entire 500 MB files into client memory.
+4. **Use `stream.pipeline` for Robust Cleanup**: Never use `.pipe()` without manual error listeners. Always use `stream.pipeline` to clean up file streams cleanly on client aborts.
+
