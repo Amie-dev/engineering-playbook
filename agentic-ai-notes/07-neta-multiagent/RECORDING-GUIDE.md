@@ -66,3 +66,8 @@ npm run eval
 - Don't skip explaining the state schema — it's the backbone
 - Don't rush through conditional edges — draw on screen if possible
 - Make sure MongoDB is running before demo
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

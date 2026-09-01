@@ -104,3 +104,18 @@ sequenceDiagram
 3. **Refine Context Window via Cross-Encoder Reranking**: Re-scoring top-20 retrieved candidates with a Cross-Encoder reranker selects the top-3 most relevant context passages, reducing context noise and token cost by over $60\%$.
 4. **Automate Quality Audits with RAG Triad Metrics**: Implement automated LLM-as-a-Judge evaluators (`/api/eval`) to continuous measure **Faithfulness** (context grounding) and **Answer Relevance**.
 
+
+
+## Learn from the implementation
+
+Use the matching source file as an executable example, not just something to copy. Before running it, state in your own words what data enters the module, what it returns, and which values it changes. Then trace one realistic request from the caller through each function.
+
+Pay special attention to these questions:
+
+- **Data flow:** Which object, array, string, or state value moves between functions? What shape must it have?
+- **Control flow:** Which branch, loop, early return, or retry changes the outcome? What condition selects it?
+- **Async boundaries:** Where does the code wait for an LLM, database, network, file system, or tool? What should happen if that operation rejects or returns no result?
+- **Side effects:** Which lines log information, make an external request, store data, or mutate in-memory state? Keep those distinct from pure calculations.
+- **Production limits:** Which assumptions are only safe for a tutorial—for example, in-memory storage, fixed thresholds, approximate token counts, mock data, or a hard-coded batch size?
+
+A useful practice is to change one input at a time and predict the result before executing it. If you can explain why the output changed, when the module should be used, and one way it could fail, you understand the concept rather than only the syntax.

@@ -153,3 +153,8 @@ src/
 - **Sliding Window Memory**: Keep recent messages, summarize old ones with LLM.
 - **Vector Memory**: Embed past interactions, retrieve relevant ones for context.
 - **Safety Layer**: Input validation, prompt injection detection, output filtering.
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

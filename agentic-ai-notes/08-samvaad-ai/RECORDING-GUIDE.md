@@ -60,3 +60,8 @@ npm run dev
 - Have a sample document ready to paste (don't type live)
 - Use short documents for demo (2-3 paragraphs)
 - Have both API keys ready in .env before recording
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

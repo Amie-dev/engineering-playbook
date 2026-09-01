@@ -136,3 +136,8 @@ curl -X POST http://localhost:3002/search \
 5. **Citations** - Track which sources were used, verify they match actual context
 6. **Guardrails** - Detect hallucinations by checking if claims are grounded in context
 7. **RAG Evaluation** - Use LLM-as-judge to score faithfulness and relevance
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

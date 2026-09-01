@@ -168,3 +168,18 @@ generateEmbedding("Calculus: Fundamental Theorem of Integration").then((v) => {
 3. **Attach Vectors Directly to Chunk Objects**: Return augmented chunk payloads containing both text metadata and 768-d `vector` fields for seamless vector store ingestion.
 4. **Deterministic Mock Vectors for Offline CI**: Maintain an offline mock vector fallback to allow ingestion test suites to run cleanly in CI environments without API keys.
 
+
+
+## Learn from the implementation
+
+Use the matching source file as an executable example, not just something to copy. Before running it, state in your own words what data enters the module, what it returns, and which values it changes. Then trace one realistic request from the caller through each function.
+
+Pay special attention to these questions:
+
+- **Data flow:** Which object, array, string, or state value moves between functions? What shape must it have?
+- **Control flow:** Which branch, loop, early return, or retry changes the outcome? What condition selects it?
+- **Async boundaries:** Where does the code wait for an LLM, database, network, file system, or tool? What should happen if that operation rejects or returns no result?
+- **Side effects:** Which lines log information, make an external request, store data, or mutate in-memory state? Keep those distinct from pure calculations.
+- **Production limits:** Which assumptions are only safe for a tutorial—for example, in-memory storage, fixed thresholds, approximate token counts, mock data, or a hard-coded batch size?
+
+A useful practice is to change one input at a time and predict the result before executing it. If you can explain why the output changed, when the module should be used, and one way it could fail, you understand the concept rather than only the syntax.

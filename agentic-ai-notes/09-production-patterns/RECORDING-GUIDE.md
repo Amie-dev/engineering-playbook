@@ -96,3 +96,8 @@ curl http://localhost:3009/dashboard | json_pp
 - Don't forget MongoDB for semantic cache (needs vector search index)
 - Keep demos short — one or two requests per pattern is enough
 - Show server logs alongside curl responses for full picture
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

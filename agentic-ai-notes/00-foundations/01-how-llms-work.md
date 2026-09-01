@@ -231,3 +231,18 @@ function generateText(model, startWord, maxTokens = 8, temperature = 0.7) {
 3. **Emergent Next-Token Prediction**: Reasoning, coding, and conversation are emergent properties of a single core loop: predicting the next token.
 4. **Sampling Parameter Strategy**: Use $T=0.0$ for deterministic agent outputs (JSON generation, math, tool calls) and $T=0.7 - 1.0$ for creative content drafting.
 5. **Model Selection Tradeoffs**: Balance cost, speed, and capability—use mini/haiku models for high-frequency routing and flagship models for complex reasoning.
+
+
+## Learn from the implementation
+
+Use the matching source file as an executable example, not just something to copy. Before running it, state in your own words what data enters the module, what it returns, and which values it changes. Then trace one realistic request from the caller through each function.
+
+Pay special attention to these questions:
+
+- **Data flow:** Which object, array, string, or state value moves between functions? What shape must it have?
+- **Control flow:** Which branch, loop, early return, or retry changes the outcome? What condition selects it?
+- **Async boundaries:** Where does the code wait for an LLM, database, network, file system, or tool? What should happen if that operation rejects or returns no result?
+- **Side effects:** Which lines log information, make an external request, store data, or mutate in-memory state? Keep those distinct from pure calculations.
+- **Production limits:** Which assumptions are only safe for a tutorial—for example, in-memory storage, fixed thresholds, approximate token counts, mock data, or a hard-coded batch size?
+
+A useful practice is to change one input at a time and predict the result before executing it. If you can explain why the output changed, when the module should be used, and one way it could fail, you understand the concept rather than only the syntax.

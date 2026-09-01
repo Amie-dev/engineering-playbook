@@ -93,3 +93,8 @@ Build a RAG-based AI tutor that answers JEE/NEET questions strictly from study m
 3. "How do you use L'Hopital's rule?" (math - should cite calculus)
 4. "What is the capital of France?" (out of scope - should be rejected)
 5. "Compare static and kinetic friction" (physics - should cite friction topic)
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

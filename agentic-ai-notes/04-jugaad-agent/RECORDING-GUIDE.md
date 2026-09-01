@@ -140,3 +140,8 @@ curl -X POST http://localhost:3004/chat \
 "Search the web for MSME registration benefits"
 "What is 4599 times 30?"
 ```
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

@@ -127,3 +127,8 @@ curl http://localhost:3001/chunking-demo
 3. **Cosine vs Dot vs Euclidean** - Different ways to measure similarity
 4. **Chunking** - Breaking large text into smaller pieces for better embedding quality
 5. **Vector Stores** - Databases optimized for similarity search
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

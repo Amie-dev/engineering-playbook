@@ -108,3 +108,8 @@ npm run eval
 - **Max Revisions** — Prevents infinite loops (capped at 2 revisions)
 - **Shared Memory** — All agents can read/write to a common memory store
 - **LLM-as-Judge** — Quality scorer evaluates output on accuracy, clarity, completeness, neutrality
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

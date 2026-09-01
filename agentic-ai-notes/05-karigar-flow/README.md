@@ -127,3 +127,8 @@ src/
 - **Conditional Edges**: Route to different nodes based on state (matches found? strong match?).
 - **Observability**: Trace every node execution — duration, tokens, cost.
 - **LangSmith**: Optional cloud tracing for production debugging.
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

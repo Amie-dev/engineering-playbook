@@ -160,3 +160,8 @@ curl http://localhost:3009/dashboard
 | Fallback Chain | `resilience/fallback-chain.js` | OpenAI -> Gemini -> cached response |
 | Retry + Backoff | `resilience/retry-with-backoff.js` | Exponential backoff with jitter |
 | Circuit Breaker | `resilience/circuit-breaker.js` | Stop calling a failing service |
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

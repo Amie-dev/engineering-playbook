@@ -110,3 +110,8 @@ curl http://localhost:3000/costs
 3. **Chain-of-Thought** - Force step-by-step reasoning for better accuracy
 4. **Prompt Chaining** - Output of one LLM call becomes input for the next
 5. **Sequential vs Parallel** - Trade-off between speed and token usage
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

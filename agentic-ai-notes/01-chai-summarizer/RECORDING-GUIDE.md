@@ -69,3 +69,8 @@ Build an article summarization API that demonstrates core prompt engineering tec
 - Gemini sometimes returns markdown-wrapped JSON - handle with try/catch
 - Free tier rate limit: 15 requests per minute
 - If JSON parsing fails, show the raw response and explain why
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

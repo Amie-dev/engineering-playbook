@@ -131,3 +131,8 @@ Create this index on the `documents` collection:
 - **RAG Pipeline** — Chunk, embed, store, vector search, generate with context
 - **Tool Calling** — Zod-typed tools with automatic execution via `maxSteps`
 - **Guardrails** — Input validation and output filtering
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.

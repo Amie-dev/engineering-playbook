@@ -143,3 +143,8 @@ curl http://localhost:3006/escalations
 "What scholarships are available for SC students?"
 "How to apply for PM Awas Yojana?"
 ```
+
+
+## Explain the implementation while demonstrating it
+
+When presenting a command or API response, connect it to the matching numbered module: name the input, the component that processes it, the result, and one guardrail or failure case. Avoid describing an AI feature as magic—state whether the result comes from retrieval, a deterministic helper, a tool, stored data, or a model call.

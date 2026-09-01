@@ -173,3 +173,8 @@ src/
 - **Guardrails**: PII detection, topic boundaries, response validation.
 - **Workflow**: Classify the query first, then route to the right action.
 - **Escalation**: When AI cannot help, hand off to a human gracefully.
+
+
+## Learning path
+
+Read the numbered module notes in order before changing the application. Each note explains one responsibility and points to the matching implementation. For each module, follow one input through the code, identify its output and side effects, then run a small example. This builds understanding of the system boundaries before you combine them.
