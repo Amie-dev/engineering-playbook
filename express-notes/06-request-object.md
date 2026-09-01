@@ -1,149 +1,136 @@
-# Module 06: Express Request (`req`) Object Architecture and Inspection API
+# Module 06: Express Request Object (`req`) — Properties, Headers, & Content Negotiation
 
-## Overview
+## Theoretical Overview & `req` Object Architecture
 
-The Express **`req` (Request)** object represents the incoming HTTP request stream sent by a client. It wraps Node.js's native `http.IncomingMessage` prototype, decorating it with high-level properties (`req.params`, `req.query`, `req.body`, `req.headers`, `req.ip`) and helper methods (`req.get()`, `req.is()`, `req.accepts()`).
-
-Mastering request metadata extraction, content-type negotiation, and reverse proxy IP address resolution (`trust proxy`) is essential for building production APIs.
-
----
-
-## 1. Express Request (`req`) Object Taxonomy Architecture
+In Express.js, the **Request object (`req`)** is an enhanced wrapper around Node's native `http.IncomingMessage`. It represents the HTTP request initiated by a client and contains properties for inspecting query parameters, route parameters, request body payloads, HTTP headers, client IP addresses, cookies, and content negotiation directives.
 
 ```mermaid
 flowchart TD
-    NativeReq["Node.js Native http.IncomingMessage"] --> ExpressReq["Express Request Wrapper (req)"]
-
-    ExpressReq --> Parameters["URL Input Data<br/>- req.params (Path Parameters)<br/>- req.query (Query Strings)"]
-    ExpressReq --> BodyData["Payload Data<br/>- req.body (JSON / Form Data)<br/>- req.files (Multipart File Uploads)"]
-    ExpressReq --> Metadata["Connection & Network Metadata<br/>- req.ip / req.ips (Client IP Address)<br/>- req.protocol ('http' / 'https')<br/>- req.secure (Boolean TLS indicator)"]
-    ExpressReq --> HeaderMethods["Header Inspection API<br/>- req.headers / req.get('Header-Name')<br/>- req.is('json') Content-Type checker<br/>- req.accepts('html') Content Negotiator"]
-
-    style ExpressReq fill:#dbeafe,stroke:#1d4ed8
-    style Metadata fill:#dcfce7,stroke:#15803d
-```
-
----
-
-## 2. Reverse Proxy Client IP Resolution Architecture (`trust proxy`)
-
-When Express runs behind a Reverse Proxy or Load Balancer (Nginx, AWS ALB, Cloudflare), `req.ip` returns the proxy server's internal IP address unless `trust proxy` is enabled:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Real Client (IP: 203.0.113.195)
-    participant LB as AWS Load Balancer (IP: 10.0.0.1)
-    participant Express as Express Application
-
-    User->>LB: GET /api/v1/resource
-    note over LB: Appends X-Forwarded-For: 203.0.113.195
-    LB->>Express: Forward GET /api/v1/resource
+    ClientReq["Incoming HTTP Request"] --> NodeReq["Node.js IncomingMessage Stream"]
+    NodeReq --> ExpressReq["Express req Wrapper"]
     
-    alt trust proxy is DISABLED (Default)
-        Express->>Express: req.ip returns Load Balancer IP "10.0.0.1" (UNSAFE for rate limiting!)
-    else trust proxy is ENABLED (app.set('trust proxy', true))
-        Express->>Express: req.ip parses X-Forwarded-For -> "203.0.113.195" (CORRECT Client IP!)
+    subgraph Properties Extracted by Express
+        ExpressReq --> Basics["Basics: req.method, req.path, req.originalUrl, req.protocol"]
+        ExpressReq --> Extracted["Extracted Data: req.params, req.query, req.body"]
+        ExpressReq --> Headers["Headers: req.get('Header-Name'), req.headers"]
+        ExpressReq --> Negotation["Content Negotiation: req.accepts(), req.is()"]
     end
 ```
 
+### Real-World Analogy: Police Station FIR Intake Form
+Think of SHO Pandey taking down a formal First Information Report (FIR) at a Delhi police station:
+- **`req.method` & `req.path`**: Identifies the type of incident being reported (e.g. `POST /complaints`).
+- **`req.get('X-FIR-Priority')`**: Checks the urgency tag stamped on the file folder (case-insensitive header inspection).
+- **`req.accepts('json')`**: Checks whether the complainant wants a digital copy sent via JSON or a physical printed receipt (`text/html`).
+- **`req.is('json')`**: Verifies if the evidence attached to the file is digital JSON or raw physical text.
+
 ---
 
-## 3. Content Negotiation & Header Inspection API Matrix
+## 1. Primary `req` Properties Reference Matrix
 
-```mermaid
-flowchart TD
-    ContentCheck[Express Request Helper API] --> Method{Method Call}
-
-    Method -- "req.get('User-Agent')" --> GetHeader["Case-Insensitive Header Lookup<br/>- req.get('content-type') === req.get('Content-Type')"]
-
-    Method -- "req.is('json')" --> IsType["Content-Type Validator<br/>- Checks incoming payload MIME type<br/>- Returns 'json', 'html', or false"]
-
-    Method -- "req.accepts('json')" --> Accepts["Accept Header Negotiator<br/>- Checks client Accept header<br/>- Returns best matching response type or false"]
-
-    style GetHeader fill:#dcfce7,stroke:#15803d
-    style IsType fill:#dbeafe,stroke:#1d4ed8
-```
-
-### Express Request Property API Matrix
-
-| Property / Method | Data Type / Return | Description & Primary Use Case |
+| Property / Method | Returns | Description & Example |
 | :--- | :--- | :--- |
-| **`req.params`** | Object | Parsed path parameters (`/users/:id` -> `{ id: '101' }`) |
-| **`req.query`** | Object | Parsed URL query parameters (`?page=2` -> `{ page: '2' }`) |
-| **`req.body`** | Object / Buffer / String | Parsed body payload (populated by body-parser middleware) |
-| **`req.get(name)`** | String \| undefined | Case-insensitive header lookup (`req.get('Authorization')`) |
-| **`req.ip`** | String | Client IP address (respects `X-Forwarded-For` if `trust proxy` set) |
-| **`req.protocol`** | String | Request protocol (`http` or `https`) |
-| **`req.secure`** | Boolean | `true` if connection is TLS/SSL encrypted (`req.protocol === 'https'`) |
-| **`req.is(type)`** | String \| false | Checks if incoming `Content-Type` matches specified MIME type |
-| **`req.accepts(types)`** | String \| false | Returns best acceptable response format based on `Accept` header |
+| **`req.method`** | `String` | The HTTP request method (e.g. `'GET'`, `'POST'`, `'PUT'`). |
+| **`req.path`** | `String` | The URL path component without query strings (e.g. `'/inspect/42'`). |
+| **`req.originalUrl`** | `String` | The full original URL including query strings (e.g. `'/inspect/42?sort=name'`). |
+| **`req.params`** | `Object` | Object containing dynamic route parameters defined in path (e.g. `{ id: '42' }`). |
+| **`req.query`** | `Object` | Object containing query string key-value pairs (e.g. `{ sort: 'name' }`). |
+| **`req.body`** | `Object` / `String` | Parsed request payload body populated by body-parser middleware. |
+| **`req.get(headerName)`** | `String` | Retrieves specified HTTP header value (**case-insensitive**, e.g., `req.get('Content-Type')`). |
+| **`req.protocol`** | `String` | Returns HTTP protocol string (`'http'` or `'https'`). |
+| **`req.hostname`** | `String` | Returns hostname derived from `Host` header (e.g. `'127.0.0.1'`). |
 
 ---
 
-## 4. Practical Implementation Showcase: Request Inspection API
+## 2. Inspecting Request Properties (`block1`)
+
+`req.get('Header-Name')` provides case-insensitive header retrieval (e.g., `req.get('x-fir-priority')` and `req.get('X-FIR-Priority')` return identical values).
 
 ```javascript
-const express = require("express");
+const express = require('express');
 const app = express();
-
-// Enable Trust Proxy when deployed behind Nginx / AWS ALB
-app.set("trust proxy", true);
 
 app.use(express.json());
 
-// Request Inspector Endpoint
-app.post("/api/v1/inspect/:category", (req, res) => {
-  // 1. Header Inspection using req.get() (Case-insensitive)
-  const userAgent = req.get("User-Agent");
-  const authHeader = req.get("authorization");
-  const clientHost = req.get("host");
-
-  // 2. Content-Type Inspection using req.is()
-  const isJsonPayload = req.is("application/json");
-
-  // 3. Content Negotiation using req.accepts()
-  const prefersJson = req.accepts("json");
-  const prefersHtml = req.accepts("html");
-
-  // Log Request Diagnostics
-  console.log("=== INCOMING REQUEST DIAGNOSTICS ===");
-  console.log(`Path Category Param: ${req.params.category}`);
-  console.log(`Query String Params:`, req.query);
-  console.log(`Client IP Address  : ${req.ip} (Protocol: ${req.protocol}, Secure: ${req.secure})`);
-  console.log(`User-Agent Header  : ${userAgent}`);
-
-  if (!prefersJson && prefersHtml) {
-    return res.status(406).send("<h1>406 Not Acceptable: Client accepts HTML only</h1>");
-  }
-
-  res.status(200).json({
-    diagnostics: {
-      category: req.params.category,
-      queryParams: req.query,
-      bodyPayload: req.body,
-      isJsonPayload,
-      clientIp: req.ip,
-      protocol: req.protocol,
-      isSecure: req.secure,
-      host: clientHost,
-      userAgent
-    }
+// Inspecting URL parameters, query parameters, and custom headers
+app.get('/inspect/:id', (req, res) => {
+  res.json({
+    basics: {
+      method: req.method,           // 'GET'
+      path: req.path,               // '/inspect/42'
+      originalUrl: req.originalUrl, // '/inspect/42?sort=name'
+      protocol: req.protocol,       // 'http'
+      hostname: req.hostname,       // '127.0.0.1'
+    },
+    extracted: {
+      query: req.query,             // { sort: 'name' }
+      params: req.params,           // { id: '42' }
+    },
+    headerInfo: {
+      customHeader: req.get('X-FIR-Priority'), // Case-insensitive lookup
+    },
   });
 });
 
-// Start Server
-app.listen(3000, () => {
-  console.log("Request Object Server running on port 3000");
+// Inspecting POST body payloads and Content-Type header
+app.post('/complaints', (req, res) => {
+  res.json({
+    receivedBody: req.body,
+    contentType: req.get('Content-Type'),
+  });
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Content Negotiation: `req.accepts()` & `req.is()` (`block2`)
 
-1. **Enable `app.set('trust proxy', true)` Behind Load Balancers**: Always enable proxy trust when deploying behind Nginx, Cloudflare, or AWS ALB so that `req.ip` and `req.protocol` accurately reflect the original client's IP address and HTTPS protocol.
-2. **Use `req.get()` for Case-Insensitive Header Retrieval**: Never access `req.headers['authorization']` directly with strict case assumptions. `req.get('authorization')` or `req.get('Authorization')` handles case normalization automatically.
-3. **Validate Incoming Payload Types with `req.is()`**: Use `req.is('json')` inside route handlers or middleware to ensure incoming `POST`/`PUT` requests supply the expected `Content-Type` before processing.
-4. **Leverage `req.accepts()` for Content Negotiation**: Use `req.accepts(['json', 'html', 'xml'])` to build APIs capable of returning JSON for API clients and HTML/XML for browser legacy clients dynamically.
+Content negotiation allows clients and servers to agree on the data format used for transmission:
+- **`req.accepts(types)`**: Checks if the client accepts specified MIME types based on the incoming `Accept` header. Returns the best match string, or `false` if none match.
+- **`req.is(type)`**: Checks if the incoming request payload matches a specific MIME type based on the `Content-Type` header. Returns the matched string or `false`.
 
+```mermaid
+flowchart LR
+    subgraph Content Negotiation Methods
+        Accepts["req.accepts(['json', 'html'])<br/>Inspects client Accept header<br/>Answers: WHAT does client want to RECEIVE?"]
+        Is["req.is('json')<br/>Inspects Content-Type header<br/>Answers: WHAT did client SENT in body?"]
+    end
+```
+
+```javascript
+const app = express();
+app.use(express.json());
+app.use(express.text());
+
+// 1. req.accepts() - Determines optimal output format based on client Accept header
+app.get('/evidence', (req, res) => {
+  const preferred = req.accepts(['json', 'html', 'text']);
+  
+  if (preferred === 'json') {
+    return res.json({ preferred, acceptsXml: req.accepts('xml') !== false });
+  }
+  if (preferred === 'html') {
+    return res.type('html').send('<pre>Evidence report</pre>');
+  }
+  res.type('text').send('Evidence report (text)');
+});
+
+// 2. req.is() - Validates incoming payload MIME type based on Content-Type header
+app.post('/evidence', (req, res) => {
+  res.json({
+    isJson: req.is('json'),       // Returns 'json' or false
+    isText: req.is('text/*'),     // Supports wildcard sub-types
+    bodyReceived: req.body,
+  });
+});
+```
+
+---
+
+## Key Takeaways
+
+1. **Full URL Visibility**: `req.path` gives the route path without queries, whereas `req.originalUrl` provides the unparsed original URL path and query string.
+2. **Parsed Payloads**: `req.params` and `req.query` are automatically populated by Express; `req.body` requires appropriate parsing middleware (`express.json()`).
+3. **Case-Insensitive Header Extraction**: Use `req.get('Header-Name')` to retrieve HTTP headers cleanly without worrying about casing.
+4. **Client Preference Matching**: Use `req.accepts()` to negotiate response formatting based on the client's `Accept` header.
+5. **Incoming Body Verification**: Use `req.is()` to verify incoming payload content types before parsing or executing business logic.

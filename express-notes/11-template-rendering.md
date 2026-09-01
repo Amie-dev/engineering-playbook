@@ -1,143 +1,165 @@
-# Module 11: Server-Side Template Rendering, View Engines, and Security Sanitization
+# Module 11: Server-Side Template Rendering & Custom View Engines
 
-## Overview
+## Theoretical Overview & Server-Side Rendering (SSR)
 
-Express supports dynamic **Server-Side Template Engine Rendering** (EJS, Pug, Handlebars) via **`app.set('view engine')`** and **`res.render('viewName', data)`**. Template engines compile layout files containing template tags on the server, injecting dynamic data payloads before returning pure HTML strings to the client browser.
-
-Understanding view engine setup, **`app.locals` vs `res.locals`** variable propagation, template caching in production, and **XSS (Cross-Site Scripting) Automatic Escaping Guards** is essential.
-
----
-
-## 1. Server-Side Rendering (SSR) Execution Architecture
+Server-Side Rendering (SSR) with Express involves dynamically assembling HTML pages on the server by injecting data models into view templates before returning the generated HTML stream to the browser client.
 
 ```mermaid
 flowchart TD
-    ClientReq[Browser GET Request /profile] --> ExpressRoute[Express Route Handler]
-
-    ExpressRoute --> FetchDB[Fetch Model Payload from Database]
-    FetchDB --> ResRender["res.render('profile', { user })"]
-
-    subgraph Template Engine Compiler (EJS / Pug)
-        ResRender --> MergeLocals[Merge app.locals + res.locals + Route Data]
-        MergeLocals --> LoadDiskView[Read Template File from /views/profile.ejs]
-        LoadDiskView --> CompileAST[Compile Template AST & Auto-Escape HTML]
-    end
-
-    CompileAST --> FinalHTML[Return Compiled HTML Stream 200 OK]
-    FinalHTML --> ClientReq
-
-    style ResRender fill:#dbeafe,stroke:#1d4ed8
-    style CompileAST fill:#dcfce7,stroke:#15803d
-```
-
----
-
-## 2. Template Engine Feature Matrix: EJS vs. Pug vs. Handlebars
-
-```mermaid
-flowchart TD
-    ViewEngineChoice[Select View Engine] --> SyntaxStyle{Design Preference}
-
-    SyntaxStyle -- "1. EJS (Embedded JavaScript)" --> EJS["EJS Engine<br/>- Uses standard HTML with <% %> tags<br/>- Zero learning curve for HTML developers<br/>- Escapes HTML by default using <%= %>"]
-
-    SyntaxStyle -- "2. Pug (formerly Jade)" --> Pug["Pug Engine<br/>- Uses indentation-based whitespace syntax<br/>- Eliminates closing HTML tags<br/>- Extremely concise templates"]
-
-    SyntaxStyle -- "3. Handlebars (HBS)" --> HBS["Handlebars Engine<br/>- Logic-less templates using {{ mustache }} syntax<br/>- Enforces strict separation of UI and business logic"]
-
-    style EJS fill:#dcfce7,stroke:#15803d
-    style Pug fill:#dbeafe,stroke:#1d4ed8
-```
-
-### Template Engine Feature Comparison
-
-| View Engine | Template Extension | Syntax Philosophy | Auto-Escape XSS Syntax | Primary Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| **EJS** | `.ejs` | Standard HTML + JS `<%= %>` | `<%= variable %>` | Rapid Node.js SSR web apps |
-| **Pug** | `.pug` | Minimalist Whitespace / Ident | `p= variable` | Concise clean template markup |
-| **Handlebars** | `.hbs` | Logic-less Mustache `{{ }}` | `{{ variable }}` | Decoupled UI template rendering |
-
----
-
-## 3. Local Variables Hierarchy (`app.locals` vs. `res.locals`)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as Browser Client
-    participant App as Express App (app.locals)
-    participant Mw as Context Middleware (res.locals)
-    participant Route as Route Handler (res.render)
-    participant View as EJS View Compiler
-
-    note over App: Global Site Title: app.locals.siteName = "Enterprise Portal"
-    Client->>App: GET /dashboard
-    App->>Mw: Executes Authentication Middleware
-    note over Mw: Session User: res.locals.currentUser = { name: "Priya" }
-    Mw->>Route: Passes to Controller
-    Route->>View: res.render('dashboard', { pageTitle: "Dashboard" })
+    ClientReq["Incoming GET Request (e.g. /home)"] --> Handler["Route Handler: res.render('home', data)"]
     
-    note over View: View merges ALL 3 scopes!<br/>- siteName (from app.locals)<br/>- currentUser (from res.locals)<br/>- pageTitle (from route payload)
-    View-->>Client: Returns Rendered HTML
+    Handler --> ViewResolver["View Engine Resolver<br/>(Looks in app.get('views') for home.ext)"]
+    ViewResolver --> Engine["Template Engine Function<br/>fn(filePath, options, callback)"]
+    
+    subgraph Engine Processing
+        Engine --> ReplaceVars["Replace Variable Tags {{variable}}"]
+        Engine --> Iteration["Process Loops {{#each list}}"]
+        Engine --> Conditionals["Evaluate Conditionals {{#if flag}}"]
+        Engine --> LayoutInject["Inject into Master Layout {{body}}"]
+    end
+    
+    LayoutInject --> Callback["callback(null, finalHtml)"]
+    Callback --> HTMLResp["res.send(finalHtml)<br/>Content-Type: text/html"]
 ```
+
+### Real-World Analogy: Bollywood Film Poster Studio
+Think of a poster designer at a Mumbai film studio:
+- **Template Layout (`layout.simplehtml`)**: Reusable blank canvas framing with slots for the movie title, billing block, and release date.
+- **View Data Model (`{ username: 'Shah Rukh Khan', films: [...] }`)**: The specific film details provided by the producer.
+- **Render Engine (`app.engine()`)**: The printing press that fills in title placeholders (`{{username}}`), loops through cast credits (`{{#each films}}`), stamps producer badges (`{{#if isProducer}}`), and outputs the finalized poster (`res.render()`).
 
 ---
 
-## 4. Practical Implementation Showcase: EJS View Engine Setup
+## 1. Express View Settings & API Reference
+
+| Express API Setting / Method | Purpose & Description |
+| :--- | :--- |
+| **`app.engine(ext, fn)`** | Registers a template engine callback `fn(filePath, options, callback)` for handling files with extension `ext`. |
+| **`app.set('view engine', ext)`** | Configures the default template extension so `res.render('home')` automatically resolves to `home.ext`. |
+| **`app.set('views', dirPath)`** | Configures the directory path where template files are stored. Defaults to `process.cwd() + '/views'`. |
+| **`res.render(view, data)`** | Resolves the view template, invokes the registered engine, and automatically sends the compiled HTML response (`200 OK`). |
+
+---
+
+## 2. Custom Template Engine Implementation (`simpleHtmlEngine`)
+
+Every Express-compatible template engine implements the signature `(filePath, options, callback)`. Below is a custom implementation handling variable substitution, list iterations, and conditional logic:
 
 ```javascript
-const express = require("express");
-const path = require("path");
+const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const app = express();
 
-// 1. Configure Template Engine Settings
-app.set("views", path.join(__dirname, "views"));
-app.set("view engine", "ejs");
+// Custom View Engine Callback Implementation
+function simpleHtmlEngine(filePath, options, callback) {
+  fs.readFile(filePath, 'utf8', (err, template) => {
+    if (err) return callback(err);
+    let rendered = template;
 
-// Enable View Template Caching in Production (Improves Performance)
-if (process.env.NODE_ENV === "production") {
-  app.enable("view cache");
+    // 1. Process Array Loops: {{#each collection}}...{{/each}}
+    let eachStart = rendered.indexOf('{{#each ');
+    while (eachStart !== -1) {
+      let eachTagEnd = rendered.indexOf('}}', eachStart);
+      let key = rendered.substring(eachStart + 8, eachTagEnd).trim();
+      let endTag = '{{/each}}';
+      let eachEnd = rendered.indexOf(endTag, eachTagEnd);
+      let body = rendered.substring(eachTagEnd + 2, eachEnd);
+
+      let arr = options[key];
+      let replacement = '';
+      if (Array.isArray(arr)) {
+        for (let idx = 0; idx < arr.length; idx++) {
+          let item = arr[idx];
+          let row = body.split('{{this}}').join(String(item)).split('{{@index}}').join(String(idx));
+          if (typeof item === 'object' && item !== null) {
+            for (let prop in item) row = row.split(`{{${prop}}}`).join(String(item[prop]));
+          }
+          replacement += row;
+        }
+      }
+      rendered = rendered.substring(0, eachStart) + replacement + rendered.substring(eachEnd + endTag.length);
+      eachStart = rendered.indexOf('{{#each ', eachStart);
+    }
+
+    // 2. Process Conditionals: {{#if condition}}...{{/if}}
+    let ifStart = rendered.indexOf('{{#if ');
+    while (ifStart !== -1) {
+      let ifTagEnd = rendered.indexOf('}}', ifStart);
+      let key = rendered.substring(ifStart + 6, ifTagEnd).trim();
+      let endTag = '{{/if}}';
+      let ifEnd = rendered.indexOf(endTag, ifTagEnd);
+      let body = rendered.substring(ifTagEnd + 2, ifEnd);
+
+      let replacement = options[key] ? body : '';
+      rendered = rendered.substring(0, ifStart) + replacement + rendered.substring(ifEnd + endTag.length);
+      ifStart = rendered.indexOf('{{#if ', ifStart);
+    }
+
+    // 3. Process Simple Placeholders: {{variable}}
+    for (let key in options) {
+      rendered = rendered.split(`{{${key}}}`).join(String(options[key]));
+    }
+
+    callback(null, rendered);
+  });
 }
 
-// 2. Global Application Locals (Available across ALL template renders)
-app.locals.siteTitle = "Enterprise Engineering Hub";
-app.locals.currentYear = new Date().getFullYear();
+// Mount Engine & Configurations
+app.engine('simplehtml', simpleHtmlEngine);
+app.set('view engine', 'simplehtml');
+app.set('views', path.join(__dirname, 'views'));
+```
 
-// 3. Request-Scoped Middleware Locals
-app.use((req, res, next) => {
-  // Available to any template rendered during THIS specific request cycle
-  res.locals.nonce = "random_nonce_991823";
-  res.locals.isAuthenticated = true;
-  res.locals.user = { name: "Priya Sharma", role: "ADMIN" };
-  next();
-});
+---
 
-// 4. Render Dynamic Template Endpoint
-app.get("/user/profile", (req, res) => {
-  const userProfile = {
-    bio: "Senior Infrastructure Engineer",
-    skills: ["Node.js", "Express", "Kubernetes", "PostgreSQL"],
-    dangerRawHtml: "<script>alert('XSS Attack!')</script>" // Test XSS escaping
-  };
+## 3. Master Layout Pattern & List Rendering (`block2`)
 
-  // Render views/profile.ejs passing local page payload
-  res.render("profile", {
-    pageTitle: "User Profile",
-    profile: userProfile
+In real-world applications, views share common HTML boilerplate (headers, footers, navigation bars). The **Layout Pattern** renders the child content view first and injects the resulting HTML string into the `{{body}}` placeholder of a master layout template.
+
+```javascript
+// Render template helper wrapper
+function renderFile(filePath, data) {
+  return new Promise((resolve, reject) => {
+    simpleHtmlEngine(filePath, data, (err, html) => err ? reject(err) : resolve(html));
   });
+}
+
+// 1. Basic View Rendering
+app.get('/greeting', (req, res) => {
+  res.render('greeting', { name: 'Shah Rukh Khan', count: 7 });
 });
 
-// Start Server
-app.listen(3000, () => {
-  console.log("Template Rendering Server running on port 3000");
+// 2. Master Layout Injection Pattern
+app.get('/home', async (req, res) => {
+  try {
+    const innerHtml = await renderFile(path.join(app.get('views'), 'home.simplehtml'), {
+      username: 'Sanjay Leela Bhansali',
+      isProducer: true,
+      films: [
+        { title: 'Devdas 2 poster', status: 'in-progress' },
+        { title: 'Padmaavat banner', status: 'done' }
+      ],
+      noFilms: false
+    });
+
+    // Inject inner view HTML into layout.simplehtml
+    res.render('layout', {
+      pageTitle: 'Dashboard',
+      body: innerHtml,
+      timestamp: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).send('Render error: ' + err.message);
+  }
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Enable View Cache in Production**: Ensure `app.enable('view cache')` is configured in production so Express caches compiled template functions in RAM rather than reading files from disk on every request.
-2. **Use `res.locals` for Middleware Data**: Pass request-scoped context (authenticated user, CSRF tokens, flash messages) down to template views using `res.locals.property` inside upstream middleware.
-3. **Rely on Default HTML Auto-Escaping**: Never use unescaped template tags (like EJS `<%- %>`) for user-supplied input unless thoroughly sanitized with libraries like DOMPurify or sanitize-html to prevent Cross-Site Scripting (XSS).
-4. **Use Absolute View Directory Paths**: Always configure `app.set('views', path.join(__dirname, 'views'))` to ensure templates resolve reliably regardless of process launch location.
-
+1. **Engine Contract**: Any view engine function registered via `app.engine(ext, fn)` must adhere to the standard callback signature `(filePath, options, callback)`.
+2. **View Defaults**: Configure `app.set('view engine', 'ext')` and `app.set('views', dir)` once at application startup to streamline `res.render()` calls.
+3. **Automated Content Type**: Calling `res.render()` automatically sets `Content-Type: text/html; charset=utf-8` and sends the compiled HTML payload.
+4. **Layout Abstraction**: Implement layout wrappers by pre-rendering component templates and injecting the resulting markup string into a master layout template.

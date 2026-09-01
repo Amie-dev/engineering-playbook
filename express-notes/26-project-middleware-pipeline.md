@@ -1,201 +1,166 @@
-# Module 26: Capstone Project — Custom Enterprise Middleware Pipeline Engine
+# Module 26: Capstone Project — Production Middleware Pipeline Architecture
 
-## Overview
+## Theoretical Overview & Middleware Pipeline Execution Order
 
-This capstone project constructs an **Enterprise Custom Middleware Pipeline Engine** in Express.js. It details the linear execution sequence of stacked middleware functions: **Security Headers**, **Request Tracing & Logging**, **Rate Limiting**, **CORS Whitelisting**, **JWT Identity Authentication**, **Schema Validation**, and **Centralized Error Propagation**.
-
-Understanding how to compose, mount, and manage complex production middleware chains without race conditions or memory leaks is essential for backend engineering.
-
----
-
-## 1. Enterprise Middleware Pipeline Sequential Topology
+The **Railway Signal Cabin Middleware Pipeline** demonstrates an enterprise-grade Express request processing engine. In Express, **middleware execution order is absolute**—requests flow down a single sequential pipeline where security, CORS, rate limiting, logging, body parsing, and compression must be evaluated in strict priority before route logic executes.
 
 ```mermaid
 flowchart TD
-    ClientReq[Incoming HTTP Request] --> M1["1. Security Headers Injection Middleware<br/>- Removes X-Powered-By<br/>- Sets X-Frame-Options: DENY, CSP, HSTS"]
-
-    M1 --> M2["2. Request Tracing & Structured Logger<br/>- Generates X-Request-ID<br/>- Records high-resolution start time (process.hrtime)"]
-
-    M2 --> M3["3. CORS Whitelist Validation<br/>- Checks Origin header against whitelist<br/>- Resolves OPTIONS preflight immediately"]
-
-    M3 --> M4["4. Sliding Window Rate Limiter<br/>- Verifies IP request budget<br/>- Throws 429 Too Many Requests if limit exceeded"]
-
-    M4 --> M5["5. JWT Authentication & RBAC Guard<br/>- Verifies Bearer token signature<br/>- Decodes Claims -> req.user"]
-
-    M5 --> M6["6. Input Schema Validator<br/>- Validates req.body against schema<br/>- Short-circuits on 422 Unprocessable Entity"]
-
-    M6 --> Controller["7. Route Controller Exec (200 OK)"]
-
-    Controller -- "Unhandled Exception" --> ErrMW["8. Centralized 4-Param Error Middleware"]
-    ErrMW --> JSONError[JSON Error Envelope Response]
-
-    style M1 fill:#dbeafe,stroke:#1d4ed8
-    style Controller fill:#dcfce7,stroke:#15803d
-    style ErrMW fill:#fee2e2,stroke:#dc2626
+    ClientReq["Incoming HTTP Request"] --> SecurityMW["1. Security Headers (securityHeaders)<br/>nosniff, DENY, HSTS, CSP"]
+    
+    SecurityMW --> CORSMW["2. CORS Engine (corsMiddleware)<br/>(Handle OPTIONS Preflight & Origin Whitelist)"]
+    CORSMW --> RateLimitMW["3. Rate Limiter (rateLimiter)<br/>(Check IP Allowance -> HTTP 429)"]
+    RateLimitMW --> LoggerMW["4. Request Logger (requestLogger)<br/>(Attach X-Request-ID & hrtime Timer)"]
+    LoggerMW --> BodyParserMW["5. Body Parser (express.json limit: 10kb)"]
+    BodyParserMW --> CompressMW["6. Compression (compressionMiddleware)<br/>(zlib Gzip Buffer Interception)"]
+    
+    CompressMW --> SchemaVal{"7. Schema Validation (validate)<br/>(POST /api/grievance)"}
+    
+    SchemaVal -->|Validation Passed| RouteHandler["8. Route Handler Execution<br/>(/health, /api/grievance, /api/large)"]
+    SchemaVal -->|Validation Failed| Err400["Return 400 Bad Request"]
+    
+    RouteHandler --> FinishEvent["res.on('finish') Event<br/>(Write Audit Log via X-Request-ID)"]
+    
+    RouteHandler -->|Unmatched Route| Fallback404["9. 404 Catch-All Handler (notFoundHandler)"]
+    RouteHandler -->|Thrown Exception| GlobalErr["10. Global Error Handler (errorHandler)"]
 ```
+
+### Real-World Analogy: Mughalsarai Junction Railway Signal Cabin
+Think of the master signal cabin at Mughalsarai Junction (Pandit Deen Dayal Upadhyaya Junction):
+- **Lever 1 — Boundary Security (`securityHeaders`)**: Lowering the main perimeter gates (`DENY` clickjacking, `nosniff`).
+- **Lever 2 — Border Clearance (`corsMiddleware`)**: Checking interstate train permits (`OPTIONS` preflight).
+- **Lever 3 — Speed Governor (`rateLimiter`)**: Ensuring no more than 100 trains enter the junction per minute (`429 Too Many Requests`).
+- **Lever 4 — Train Tracking Number (`requestLogger`)**: Stamping a unique tracking UUID (`X-Request-ID`) onto every train's manifest.
+- **Lever 5 — Weight Inspection (`express.json limit: 10kb`)**: Rejecting overloaded freight wagons (`Payload Too Large`).
+- **Lever 6 — Cargo Compression (`compressionMiddleware`)**: Packing cargo efficiently (`Gzip` compression).
+- **Lever 7 — Manifest Verification (`validate(schema)`)**: Inspecting freight documentation before granting track access.
 
 ---
 
-## 2. Middleware Chain Execution State & Short-Circuit Mechanics
+## 1. Middleware Execution Order & Responsibility Matrix
 
-```mermaid
-flowchart TD
-    Chain[Middleware Execution Chain] --> Flow{Pipeline Decision Point}
-
-    Flow -- "1. Standard Passage (next())" --> Pass["Invokes next()<br/>- Passes control to subsequent middleware step<br/>- Context state preserved in res.locals"]
-
-    Flow -- "2. Short-Circuit (res.json())" --> Terminate["Direct Response Return<br/>- Returns early (e.g. 401 Unauthorized or 429 Rate Limit)<br/>- Does NOT call next(); downstream pipeline aborted!"]
-
-    Flow -- "3. Error Forwarding (next(err))" --> JumpError["Invokes next(err)<br/>- Bypasses all standard route handlers<br/>- Jumps directly to 4-param Error Handler"]
-
-    style Pass fill:#dcfce7,stroke:#15803d
-    style Terminate fill:#fef3c7,stroke:#b45309
-    style JumpError fill:#fee2e2,stroke:#dc2626
-```
-
----
-
-## 3. Pipeline Layer Ordering & Responsibility Matrix
-
-```mermaid
-flowchart TD
-    Order[Pipeline Layer Ordering Principles] --> O1["Layer 1: Edge Security & CORS (Must execute FIRST before reading body)"]
-    Order --> O2["Layer 2: Logging & Tracing (Must capture request entry timestamp)"]
-    Order --> O3["Layer 3: Body Parsing & Rate Limiting (Prevents DoS before CPU work)"]
-    Order --> O4["Layer 4: Authentication & Validation (Guards business logic controllers)"]
-    Order --> O5["Layer 5: Route Controllers & Centralized Error Middleware (Must execute LAST)"]
-
-    style O1 fill:#dbeafe,stroke:#1d4ed8
-    style O5 fill:#dcfce7,stroke:#15803d
-```
-
-### Pipeline Layer Order & Functional Purpose Matrix
-
-| Step | Middleware Layer | Execution Position | Security / Architectural Purpose |
+| Pipeline Sequence | Middleware Layer | Primary Responsibility | Failure Action / Status Code |
 | :--- | :--- | :--- | :--- |
-| **1** | Security Headers & CORS | Global (Top of stack) | Hardens HTTP response headers and handles preflight OPTIONS early. |
-| **2** | Tracing & Logging | Global (Top of stack) | Injects unique Request ID (`reqId`) and hooks `res.on('finish')` timing. |
-| **3** | Body Parser & Rate Limiter | Global / Grouped | Parses JSON bodies and caps IP request volume to protect CPU resources. |
-| **4** | Auth & Input Validation | Route-Specific | Verifies credentials and checks payload schemas before controller execution. |
-| **5** | Route Controller | Endpoint Handler | Executes pure business logic and sends `200` / `201` success JSON payload. |
-| **6** | Centralized Error Handler | Global (Bottom of stack) | Catches all unhandled exceptions passed via `next(err)`. |
+| **Step 1** | `securityHeaders()` | Sets `nosniff`, `DENY`, HSTS, and CSP headers. Removes `X-Powered-By`. | Continues `next()`. |
+| **Step 2** | `corsMiddleware()` | Validates origins; intercepts `OPTIONS` preflight requests. | Returns `204 No Content` for preflight. |
+| **Step 3** | `rateLimiter()` | Tracks IP request frequency over rolling time windows. | Returns `429 Too Many Requests`. |
+| **Step 4** | `requestLogger()` | Generates `X-Request-ID` correlation UUIDs & tracks nanosecond timing. | Continues `next()`. |
+| **Step 5** | `express.json({ limit: '10kb' })` | Parses JSON body; caps payload sizes. | Returns `413 Payload Too Large`. |
+| **Step 6** | `compressionMiddleware()` | Intercepts `res.json()` to Gzip compress payloads $> 1\text{ KB}$. | Continues `next()`. |
+| **Step 7** | `validate(schema)` | Validates field types, lengths, and regex patterns. | Returns `400 Bad Request`. |
+| **Step 8** | Route Controllers | Executes business logic (`/health`, `/api/grievance`, `/api/large`). | Returns `200 OK` / `201 Created`. |
+| **Step 9** | `notFoundHandler` | Catches unmatched HTTP requests. | Returns `404 Not Found`. |
+| **Step 10** | `errorHandler` | Four-parameter central error handler catching exceptions. | Returns `500 Internal Server Error`. |
 
 ---
 
-## 4. Practical Implementation Showcase: Complete Pipeline Engine
+## 2. Core Custom Middleware Implementations (Sections 1–6)
 
 ```javascript
-const express = require("express");
-const app = express();
+const express = require('express');
+const crypto = require('crypto');
+const zlib = require('zlib');
+const { Buffer } = require('buffer');
 
-app.use(express.json());
+// 1. Security Headers Layer
+function securityHeaders() {
+  return (req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "default-src 'self'");
+    res.removeHeader('X-Powered-By');
+    next();
+  };
+}
 
-// =============================================================================
-// PIPELINE LAYER 1: SECURITY HEADERS & CORS
-// =============================================================================
-app.use((req, res, next) => {
-  res.removeHeader("X-Powered-By");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+// 2. Correlation ID Request Logger Layer
+function requestLogger() {
+  return (req, res, next) => {
+    const start = process.hrtime.bigint();
+    const requestId = req.headers['x-request-id'] || crypto.randomUUID();
+    req.requestId = requestId;
+    res.setHeader('X-Request-ID', requestId);
 
-  // Handle CORS Origin Header
-  const origin = req.headers.origin;
-  if (origin) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  }
-
-  if (req.method === "OPTIONS") {
-    return res.status(204).end(); // Resolve preflight immediately
-  }
-  next();
-});
-
-// =============================================================================
-// PIPELINE LAYER 2: REQUEST TRACING & LOGGING
-// =============================================================================
-app.use((req, res, next) => {
-  const reqId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-  res.locals.requestId = reqId;
-  res.setHeader("X-Request-ID", reqId);
-
-  const startMs = Date.now();
-  res.on("finish", () => {
-    const duration = Date.now() - startMs;
-    console.log(`[PIPELINE LOG] [${reqId}] ${req.method} ${req.originalUrl} ${res.statusCode} - ${duration}ms`);
-  });
-
-  next();
-});
-
-// =============================================================================
-// PIPELINE LAYER 3: RATE LIMITER
-// =============================================================================
-const requestCounts = new Map();
-app.use((req, res, next) => {
-  const ip = req.ip || req.socket.remoteAddress;
-  const count = (requestCounts.get(ip) || 0) + 1;
-  requestCounts.set(ip, count);
-
-  if (count > 50) {
-    return res.status(429).json({
-      status: "fail",
-      error: "TOO_MANY_REQUESTS",
-      message: "Rate limit threshold exceeded"
+    res.on('finish', () => {
+      const ms = (Number(process.hrtime.bigint() - start) / 1e6).toFixed(2);
+      req.app.locals.requestLogs = req.app.locals.requestLogs || [];
+      req.app.locals.requestLogs.push(`[${requestId.slice(0, 8)}] ${req.method} ${req.originalUrl} ${res.statusCode} ${ms}ms`);
     });
-  }
-  next();
-});
+    next();
+  };
+}
 
-// =============================================================================
-// PIPELINE LAYER 4: ROUTE CONTROLLERS & VALIDATION
-// =============================================================================
-const validatePayload = (req, res, next) => {
-  if (!req.body || !req.body.name) {
-    const err = new Error("Field 'name' is required");
-    err.statusCode = 400;
-    return next(err); // Pass to centralized error handler
-  }
-  next();
-};
-
-app.post("/api/v1/pipeline/data", validatePayload, (req, res) => {
-  res.status(200).json({
-    status: "success",
-    message: "Request processed through 5-stage enterprise middleware pipeline!",
-    requestId: res.locals.requestId,
-    data: req.body
-  });
-});
-
-// =============================================================================
-// PIPELINE LAYER 5: CENTRALIZED ERROR HANDLER (MUST BE LAST!)
-// =============================================================================
-app.use((err, req, res, next) => {
-  const statusCode = err.statusCode || 500;
-  console.error(`🚨 [PIPELINE ERROR] [${res.locals.requestId || "NO_ID"}]:`, err.message);
-
-  res.status(statusCode).json({
-    status: "error",
-    requestId: res.locals.requestId,
-    error: { message: err.message || "Internal Pipeline Error" }
-  });
-});
-
-// Start Server
-app.listen(3000, () => {
-  console.log("Custom Middleware Pipeline Server running on port 3000");
-});
+// 3. Declarative Schema Validator Layer
+function validate(schema) {
+  return (req, res, next) => {
+    const errors = [];
+    for (const [field, rules] of Object.entries(schema)) {
+      const v = req.body[field];
+      if (rules.required && (v === undefined || v === null || v === '')) {
+        errors.push(`${field} is required`); continue;
+      }
+      if (v === undefined) continue;
+      if (rules.type === 'string' && typeof v !== 'string') errors.push(`${field} must be a string`);
+      if (rules.minLength && typeof v === 'string' && v.length < rules.minLength) errors.push(`${field} min ${rules.minLength} chars`);
+      if (rules.pattern && typeof v === 'string' && !rules.pattern.test(v)) errors.push(`${field} format is invalid`);
+    }
+    if (errors.length) return res.status(400).json({ success: false, error: 'Validation failed', details: errors });
+    next();
+  };
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Assembling the Enterprise Pipeline (Sections 8–10)
 
-1. **Order Matters Critically**: Mount security headers, request logging, and CORS middleware at the top of the stack so every request—including short-circuited or errored requests—receives headers and timing logs.
-2. **Mount Centralized Error Middleware Last**: Always place your 4-parameter error middleware function `(err, req, res, next)` at the absolute bottom of the middleware chain after all route definitions.
-3. **Always Call `next()` or Return a Response**: Every middleware function MUST either call `next()` to pass control forward, send a response (`res.json()`) to short-circuit, or call `next(err)` to trigger error handling. Failing to do so hangs client requests indefinitely.
-4. **Use `res.locals` to Pass Request Context Down the Chain**: Attach transient metadata (e.g. `res.locals.requestId`, `res.locals.user`) to `res.locals` so downstream middleware and route handlers can access context cleanly.
+```javascript
+function createApp() {
+  const app = express();
 
+  // STACK INVOCATION ORDER MATTERS: Security -> CORS -> Rate Limit -> Logger -> Body -> Compression -> Routes -> 404 -> Error
+  app.use(securityHeaders());
+  app.use(corsMiddleware({ allowedOrigins: ['http://localhost:3000', 'http://indianrailways.gov.in'], credentials: true }));
+  
+  const limiter = rateLimiter({ windowMs: 60000, maxRequests: 100 });
+  app.use(limiter);
+  app.use(requestLogger());
+  app.use(express.json({ limit: '10kb' })); // Strict 10 KB body size cap
+  app.use(compressionMiddleware());
+
+  // Application Endpoints
+  app.get('/health', (req, res) => res.json({ success: true, data: { status: 'healthy' } }));
+  
+  const grievanceSchema = {
+    name: { required: true, type: 'string', minLength: 2 },
+    email: { required: true, type: 'string', pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
+    message: { required: true, type: 'string', minLength: 10 },
+  };
+
+  app.post('/api/grievance', validate(grievanceSchema), (req, res) => {
+    res.status(201).json({
+      success: true,
+      data: { id: crypto.randomUUID(), ...req.body, receivedAt: new Date().toISOString() }
+    });
+  });
+
+  // 404 Catch-All & Centralized Error Handlers
+  app.use(notFoundHandler);
+  app.use(errorHandler);
+  
+  app.locals.limiter = limiter;
+  return app;
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Strict Ordering Rules**: Mount security headers and CORS handlers at the top of the stack, and place 404 catch-alls and 4-parameter error handlers at the bottom.
+2. **Correlation Tracking**: Generate and attach `X-Request-ID` headers early in the pipeline to trace individual requests across microservices and log aggregators.
+3. **Payload Protection**: Limit incoming JSON request bodies (`express.json({ limit: '10kb' })`) to defend against memory exhaustion and buffer overflow DoS attacks.
+4. **Clean Route Controllers**: Encapsulate validation rules into reusable middleware so route controllers focus exclusively on core domain logic.

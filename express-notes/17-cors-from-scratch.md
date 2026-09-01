@@ -1,145 +1,156 @@
-# Module 17: Cross-Origin Resource Sharing (CORS), Preflight Flow, and Security Headers
+# Module 17: Cross-Origin Resource Sharing (CORS) Mechanics from Scratch
 
-## Overview
+## Theoretical Overview & Same-Origin Policy (SOP)
 
-**CORS (Cross-Origin Resource Sharing)** is a critical W3C browser security mechanism that restricts web pages running on one origin (domain, protocol, or port) from requesting resources on a different origin. Express applications configure CORS response headers (`Access-Control-Allow-Origin`, `Access-Control-Allow-Methods`, `Access-Control-Allow-Headers`) and handle **`OPTIONS` Preflight Requests**.
+The **Same-Origin Policy (SOP)** is a fundamental browser security mechanism that restricts scripts loaded on one origin from interacting with resources hosted on a different origin. An **Origin** is defined strictly by the tuple combination of **`Protocol + Hostname + Port`**.
 
-Understanding **Simple vs. Non-Simple Requests**, **OPTIONS Preflight Negotiation**, **Dynamic Origin Whitelisting**, and **Credentials Handling (`Access-Control-Allow-Credentials`)** is essential.
-
----
-
-## 1. CORS Preflight Handshake Architecture
-
-When a browser makes a non-simple cross-origin request (e.g. using `PUT`, `DELETE`, or custom `Authorization` headers), it automatically dispatches an **`OPTIONS` Preflight Request** before sending the actual HTTP request:
+**Cross-Origin Resource Sharing (CORS)** is an HTTP-header-based mechanism that allows servers to state which foreign origins are granted permission to read response data in web browsers.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Browser as Client Browser (Origin: https://app.example.com)
-    participant Express as Express API Server (Origin: https://api.example.com)
-
-    note over Browser,Express: STEP 1: PREFLIGHT OPTIONS HANDSHAKE
-    Browser->>Express: OPTIONS /api/v1/users/101<br/>Header: Access-Control-Request-Method: DELETE<br/>Header: Access-Control-Request-Headers: Authorization
+flowchart TD
+    Browser["Browser Client (Origin: http://frontend.app.in)"] --> CheckSimple{"Is Simple Request?<br/>(GET/POST with standard headers)"}
     
-    Express->>Express: Inspect Origin & Requested Headers against Whitelist
-    Express-->>Browser: 204 No Content<br/>Header: Access-Control-Allow-Origin: https://app.example.com<br/>Header: Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS<br/>Header: Access-Control-Allow-Headers: Authorization, Content-Type<br/>Header: Access-Control-Max-Age: 86400
-
-    note over Browser,Express: STEP 2: ACTUAL HTTP REQUEST EXECUTION
-    Browser->>Express: DELETE /api/v1/users/101 (Authorization: Bearer token)
-    Express-->>Browser: 200 OK Resource Deleted Payload
+    CheckSimple -->|Yes (Simple Request)| SendDirect["1. Direct Request + Origin Header"]
+    CheckSimple -->|No (Preflighted)| Preflight["1. Issue HTTP OPTIONS Preflight Request<br/>- Access-Control-Request-Method: PUT<br/>- Access-Control-Request-Headers: Authorization"]
+    
+    Preflight --> ServerPreflight["Server Preflight Handler"]
+    ServerPreflight -->|Returns 204 No Content| PreflightCheck{"Headers Match Server Policy?"}
+    
+    PreflightCheck -->|No| BlockBrowser1["Browser Blocks Request<br/>(CORS Error)"]
+    PreflightCheck -->|Yes (204 + Max-Age)| SendDirect
+    
+    SendDirect --> ServerResp["Server Response + Access-Control-Allow-Origin"]
+    ServerResp --> BrowserOriginCheck{"Origin Allowed by Server Header?"}
+    
+    BrowserOriginCheck -->|No (Header Missing/Mismatch)| BlockBrowser2["Browser Hides Response from JS Engine"]
+    BrowserOriginCheck -->|Yes| JSApp["JavaScript Engine Accesses Data"]
 ```
+
+### Real-World Analogy: Embassy Visa Counter
+Think of international travel between sovereign nations:
+- **Same-Origin Policy (SOP)**: National borders. Citizens of Nation A (`http://app.in:8080`) cannot enter Nation B (`http://api.com:3000`) without explicit permission.
+- **CORS Headers**: Visa stamps issued by Nation B's embassy (`Access-Control-Allow-Origin: http://app.in:8080`).
+- **Preflight `OPTIONS` Request**: A visa interview conducted before booking a trip. For high-risk operations (PUT/DELETE/JSON payloads), the browser conducts an `OPTIONS` interview first to ask: *"Is this foreign citizen allowed to perform a PUT operation?"*
+- **Browser Enforcement**: The border officer at the destination airport. The server may process the request, but the browser border officer blocks the traveler from leaving the terminal if the visa stamp (`Access-Control-Allow-Origin`) is missing.
 
 ---
 
-## 2. Simple Requests vs. Non-Simple Preflight Requests
+## 1. Simple Requests vs. Preflighted Requests
 
-```mermaid
-flowchart TD
-    RequestType[Incoming Cross-Origin Request] --> CheckCriteria{Simple Request Criteria?}
-
-    CheckCriteria -- "1. Simple Request<br/>- Method: GET, POST, or HEAD<br/>- Headers: Accept, Accept-Language, Content-Type<br/>- Content-Type: text/plain, multipart/form-data, or application/x-www-form-urlencoded" --> DirectSend["Direct Request Dispatch<br/>- Browser sends request immediately<br/>- Checks Access-Control-Allow-Origin in response"]
-
-    CheckCriteria -- "2. Non-Simple Request<br/>- Method: PUT, PATCH, DELETE<br/>- Custom Headers: Authorization, X-API-Key<br/>- Content-Type: application/json" --> Preflight["Preflight OPTIONS Required<br/>- Browser sends preliminary OPTIONS request<br/>- Waits for 204 No Content approval before actual request!"]
-
-    style Preflight fill:#fef3c7,stroke:#b45309
-    style DirectSend fill:#dcfce7,stroke:#15803d
-```
-
-### CORS Header Configuration Matrix
-
-| CORS Header | Value / Format | Security Purpose & Function |
+| Metric / Aspect | Simple Requests | Preflighted Requests |
 | :--- | :--- | :--- |
-| **`Access-Control-Allow-Origin`** | `https://app.domain.com` (Never `*` with credentials) | Specifies trusted origin domain permitted to read response. |
-| **`Access-Control-Allow-Methods`**| `GET, POST, PUT, DELETE, OPTIONS` | Specifies permitted HTTP verbs for cross-origin calls. |
-| **`Access-Control-Allow-Headers`**| `Content-Type, Authorization, X-Requested-With` | Specifies permitted custom request HTTP headers. |
-| **`Access-Control-Allow-Credentials`**| `true` | Permits client browsers to send cookies and HTTP auth headers. |
-| **`Access-Control-Max-Age`** | `86400` (Seconds) | Caches preflight OPTIONS approval in browser (reduces OPTIONS traffic). |
+| **HTTP Verbs** | `GET`, `HEAD`, `POST`. | `PUT`, `DELETE`, `PATCH`, `OPTIONS`. |
+| **Content-Type** | `text/plain`, `multipart/form-data`, `application/x-www-form-urlencoded`. | `application/json`, `application/xml`, or custom MIME types. |
+| **Headers** | Standard browser headers (`Accept`, `Accept-Language`). | Custom headers (`Authorization`, `X-API-Key`, `X-Request-Id`). |
+| **Preflight `OPTIONS`** | **No preflight request**. Sent directly. | **Mandatory `OPTIONS` preflight** sent before actual request. |
 
 ---
 
-## 3. Dynamic Origin Whitelisting Architecture
+## 2. Dynamic Origin Reflection & `Vary: Origin` (`block1`)
 
-Hardcoding a single origin string prevents multi-tenant or multi-frontend setups. A dynamic origin checker validates incoming `Origin` request headers against an array whitelist:
-
-```mermaid
-flowchart TD
-    Incoming[Incoming HTTP Request] --> ExtractOrigin["Extract req.headers.origin"]
-
-    ExtractOrigin --> CheckList{Is Origin in Allowed Whitelist Array?}
-
-    CheckList -- "Yes (Matches Whitelist)" --> SetHeader["Set Access-Control-Allow-Origin = req.headers.origin<br/>Set Access-Control-Allow-Credentials = true"]
-    CheckList -- "No (Disallowed Origin)" --> OmitHeader["Omit Access-Control-Allow-Origin Header<br/>(Browser blocks response reading!)"]
-
-    SetHeader --> NextMW["Pass to Controller"]
-    OmitHeader --> NextMW
-
-    style SetHeader fill:#dcfce7,stroke:#15803d
-    style OmitHeader fill:#fee2e2,stroke:#dc2626
-```
-
----
-
-## 4. Practical Implementation Showcase: Custom Production CORS Middleware
+When supporting multiple specific origins, echoing the incoming `Origin` header requires setting `Vary: Origin` to ensure downstream CDNs cache separate response headers for different origin domains.
 
 ```javascript
-const express = require("express");
+const express = require('express');
 const app = express();
 
-app.use(express.json());
+// 1. Basic Allow All CORS (Wildcard)
+function corsAllowAll() {
+  return (req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    next();
+  };
+}
 
-// Enterprise Origin Whitelist Array
-const ALLOWED_ORIGIN_WHITELIST = [
-  "https://app.techplaybook.org",
-  "https://admin.techplaybook.org",
-  "http://localhost:3000" // Allowed local dev origin
-];
+// 2. Specific Whitelist Origin Reflection with Vary Header
+function corsAllowSpecific(allowedOrigins) {
+  const origins = Array.isArray(allowedOrigins) ? allowedOrigins : [allowedOrigins];
+  return (req, res, next) => {
+    const requestOrigin = req.headers.origin;
+    if (requestOrigin && origins.includes(requestOrigin)) {
+      // Echo back exact origin (never "*" when handling specific credentials)
+      res.setHeader('Access-Control-Allow-Origin', requestOrigin);
+      res.setHeader('Vary', 'Origin'); // Critical for CDN caching correctness!
+    }
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    next();
+  };
+}
 
-// Production Dynamic CORS Middleware Implementation
-const productionCorsMiddleware = (req, res, next) => {
-  const requestOrigin = req.headers.origin;
-
-  // 1. Validate Origin against Whitelist Array
-  if (requestOrigin && ALLOWED_ORIGIN_WHITELIST.includes(requestOrigin)) {
-    // Reflect exact origin back (NEVER use '*' when credentials are enabled!)
-    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With");
-    res.setHeader("Access-Control-Allow-Credentials", "true");
-    res.setHeader("Access-Control-Max-Age", "86400"); // Cache OPTIONS preflight for 24 Hours
-  }
-
-  // 2. Intercept & Resolve OPTIONS Preflight Requests Immediately
-  if (req.method === "OPTIONS") {
-    // Return 204 No Content with empty body for preflight checks
-    return res.status(204).end();
-  }
-
-  next(); // Pass control to API controllers
-};
-
-// Apply Global CORS Middleware
-app.use(productionCorsMiddleware);
-
-// Sample Protected API Resource Endpoint
-app.put("/api/v1/user/profile", (req, res) => {
-  res.status(200).json({
-    status: "success",
-    message: "Cross-origin PUT update approved and processed successfully"
-  });
-});
-
-// Start Server
-app.listen(3000, () => {
-  console.log("CORS Management Server running on port 3000");
-});
+app.use('/open', corsAllowAll());
+app.use('/restricted', corsAllowSpecific(['http://trusted-app.in', 'http://partner-site.gov.in']));
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Production CORS Engine: Credentials, Expose-Headers, & Max-Age (`block2`)
 
-1. **CORS is Enforced by Browsers, Not Server Engines**: CORS headers instruct user *web browsers* whether to block or allow JavaScript from reading responses. Non-browser HTTP clients (curl, Postman, server-to-server calls) bypass CORS checks entirely.
-2. **Never Pair `Access-Control-Allow-Origin: *` with `Credentials: true`**: Browsers throw a fatal security exception if a server returns wildcard `Access-Control-Allow-Origin: *` while simultaneously specifying `Access-Control-Allow-Credentials: true`.
-3. **Cache Preflight Requests with `Access-Control-Max-Age`**: Set `Access-Control-Max-Age: 86400` (24 hours) to allow client browsers to cache `OPTIONS` preflight approvals, eliminating redundant OPTIONS network calls.
-4. **Intercept `OPTIONS` Requests Early**: Always return an early `204 No Content` response for `OPTIONS` requests before firing heavy database middleware or route handlers.
+A production CORS middleware supporting cookie credentials, custom header exposure, and preflight caching (`Access-Control-Max-Age`):
 
+```javascript
+function corsMiddleware(options = {}) {
+  const {
+    origin = '*',
+    methods = ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE'],
+    allowedHeaders = ['Content-Type', 'Authorization'],
+    exposedHeaders = [],
+    credentials = false,
+    maxAge = null
+  } = options;
+
+  function resolveOrigin(requestOrigin) {
+    if (origin === '*') return '*';
+    if (typeof origin === 'function') return origin(requestOrigin) ? requestOrigin : false;
+    const list = Array.isArray(origin) ? origin : [origin];
+    return list.includes(requestOrigin) ? requestOrigin : false;
+  }
+
+  return (req, res, next) => {
+    const allowed = resolveOrigin(req.headers.origin);
+    if (allowed && allowed !== false) {
+      res.setHeader('Access-Control-Allow-Origin', allowed);
+      if (allowed !== '*') res.setHeader('Vary', 'Origin');
+    }
+
+    // CRITICAL: Browsers REJECT combining credentials: true with origin: "*"
+    if (credentials) res.setHeader('Access-Control-Allow-Credentials', 'true');
+    if (exposedHeaders.length > 0) {
+      res.setHeader('Access-Control-Expose-Headers', exposedHeaders.join(', '));
+    }
+
+    // Handle OPTIONS Preflight Requests
+    if (req.method === 'OPTIONS') {
+      res.setHeader('Access-Control-Allow-Methods', methods.join(', '));
+      res.setHeader('Access-Control-Allow-Headers', allowedHeaders.join(', '));
+      if (maxAge !== null) res.setHeader('Access-Control-Max-Age', String(maxAge));
+      return res.status(204).end();
+    }
+    next();
+  };
+}
+
+// Mount Configured Production CORS
+app.use('/full', corsMiddleware({
+  origin: (o) => ['http://app.india.gov.in', 'http://admin.india.gov.in'].includes(o),
+  methods: ['GET', 'POST', 'PUT'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id'],
+  exposedHeaders: ['X-Total-Count', 'X-Request-Id'],
+  credentials: true,
+  maxAge: 86400 // Cache preflight OPTIONS for 24 hours
+}));
+```
+
+---
+
+## Key Takeaways
+
+1. **Browser-Side Enforcement**: CORS is enforced by **client web browsers**, not servers. The server executes business logic regardless, but the browser hides response data from JavaScript if CORS headers are missing.
+2. **Wildcard Credential Invariant**: Browsers strictly reject responses containing `Access-Control-Allow-Credentials: true` if `Access-Control-Allow-Origin` is set to `*`. You must echo the specific request origin.
+3. **Always Set `Vary: Origin`**: When dynamically reflecting specific origins in `Access-Control-Allow-Origin`, set `Vary: Origin` to prevent CDNs from serving cached origin headers to wrong domains.
+4. **Preflight Optimization (`Max-Age`)**: Set `Access-Control-Max-Age: 86400` on `OPTIONS` responses to cache preflight decisions, eliminating double HTTP roundtrips on subsequent requests.
+5. **Exposing Custom Headers**: Browsers restrict client JavaScript from reading custom response headers unless explicitly listed in `Access-Control-Expose-Headers`.

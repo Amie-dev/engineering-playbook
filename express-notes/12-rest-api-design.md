@@ -1,199 +1,219 @@
-# Module 12: RESTful API Design Patterns, Response Envelopes, and HTTP Status Codes
+# Module 12: RESTful API Design — CRUD, HTTP Status Codes, & Pagination
 
-## Overview
+## Theoretical Overview & REST Architecture
 
-Designing production-grade **RESTful APIs** in Express requires adhering to architectural constraints: **Resource-Oriented URI Naming**, **Uniform Interface Contracts**, **Standardized JSON Response Envelopes**, **API Versioning (`/api/v1/`)**, and strict **HTTP Status Code Semantics**.
-
-Understanding REST resource modelling, RFC 7807 Problem Details error formatting, cursor-based vs offset-based pagination schemas, and stateless CRUD controller patterns is essential.
-
----
-
-## 1. RESTful API Architecture Topology
+**REpresentational State Transfer (REST)** is an architectural style for designing networked APIs based on resource-oriented URIs and standard HTTP methods.
 
 ```mermaid
 flowchart TD
-    Client[REST API Client] --> Gateway[API Gateway / Router - /api/v1/]
-
-    subgraph Resource-Oriented Naming Convention
-        Gateway -->|GET /api/v1/users| UsersCollection["Collection Endpoint (Get All Users)"]
-        Gateway -->|POST /api/v1/users| CreateUser["Collection Endpoint (Create User)"]
-        Gateway -->|GET /api/v1/users/101| UserEntity["Element Endpoint (Get Single User)"]
-        Gateway -->|GET /api/v1/users/101/orders| SubResource["Sub-Resource Endpoint (User Orders)"]
-    end
-
-    UsersCollection --> Envelope["Standardized Response Envelope Format"]
-    Envelope --> ClientResponse[JSON Payload Response]
-
-    style Gateway fill:#dbeafe,stroke:#1d4ed8
-    style Envelope fill:#dcfce7,stroke:#15803d
+    Client["Client App"] -->|1. Request (Verb + Noun URI)| Router["Express API Router"]
+    
+    Router --> CheckURI{"Route URI & Verb"}
+    
+    CheckURI -->|GET /citizens| List["GET /citizens (200 OK)"]
+    CheckURI -->|POST /citizens| Create["POST /citizens (201 Created)"]
+    CheckURI -->|PUT /citizens/:id| Replace["PUT /citizens/:id (200 OK - Full Replace)"]
+    CheckURI -->|PATCH /citizens/:id| Update["PATCH /citizens/:id (200 OK - Partial Update)"]
+    CheckURI -->|DELETE /citizens/:id| Remove["DELETE /citizens/:id (204 No Content)"]
+    
+    List --> StandardEnvelope["Standard JSON Response Envelope<br/>{ success: true, data, pagination }"]
+    Create --> StandardEnvelope
+    Replace --> StandardEnvelope
+    Update --> StandardEnvelope
+    Remove --> NoBody["204 No Content (Empty Body)"]
 ```
+
+### Real-World Analogy: Tehsildar Sharma's Citizen Ledger
+Think of Tehsildar Sharma ji managing the municipal citizen registry at the local Tehsil office:
+- **Noun URIs (`/citizens`)**: Files are indexed by resource nouns (`/citizens`), never action verbs (`/getAllCitizens`).
+- **HTTP Verbs as Actions**:
+  - **GET**: Inspecting a citizen's registration certificate (Read-only).
+  - **POST**: Registering a newborn citizen in the registry (Create $\to$ `201 Created`).
+  - **PUT**: Reissuing a full certificate where all fields must be re-validated (Full Replace).
+  - **PATCH**: Updating only the residential address field on an existing file (Partial Update).
+  - **DELETE**: Expunging a duplicate record from the archives (`204 No Content`).
 
 ---
 
-## 2. Standardized JSON Response Envelope Formats
+## 1. RESTful HTTP Status Code Taxonomy Matrix
 
-To ensure consistent API contracts across teams, responses use standardized JSON envelopes for both success and error responses:
-
-```mermaid
-flowchart TD
-    APIResponse[Express API Response Payload] --> Format{Response Type}
-
-    Format -- "1. Success Envelope (HTTP 200 / 201)" --> Success["{<br/>  'status': 'success',<br/>  'results': 2,<br/>  'pagination': { 'page': 1, 'limit': 10, 'totalPages': 5 },<br/>  'data': { 'items': [...] }<br/>}"]
-
-    Format -- "2. Error Envelope (RFC 7807 Standard)" --> Failure["{<br/>  'type': 'https://api.example.com/errors/validation',<br/>  'title': 'Unprocessable Entity',<br/>  'status': 422,<br/>  'detail': 'Email address is invalid',<br/>  'instance': '/api/v1/users'<br/>}"]
-
-    style Success fill:#dcfce7,stroke:#15803d
-    style Failure fill:#fee2e2,stroke:#dc2626
-```
-
-### HTTP Status Code Semantics Matrix
-
-| Code | Status Text | Semantic Meaning | Response Body Payload |
-| :--- | :--- | :--- | :--- |
-| **`200`** | `OK` | Standard successful retrieval or update | JSON payload representation |
-| **`201`** | `Created` | Successful creation of new entity | JSON payload of created entity |
-| **`204`** | `No Content` | Successful request with no body to return | **Empty Body** (`res.status(204).send()`) |
-| **`400`** | `Bad Request` | Malformed JSON payload or missing parameters | Error detail envelope |
-| **`401`** | `Unauthorized` | Missing or invalid authentication token | Error detail envelope |
-| **`403`** | `Forbidden` | Authenticated but lacks required RBAC role | Error detail envelope |
-| **`404`** | `Not Found` | Target endpoint or resource ID does not exist | Error detail envelope |
-| **`422`** | `Unprocessable` | Syntactically correct JSON failing schema validation | Array of validation field errors |
-| **`429`** | `Too Many Requests` | Rate limit threshold exceeded | Error detail envelope + `Retry-After` header |
-| **`500`** | `Internal Error` | Unexpected server exception or crash | Sanitized generic error message |
+| Status Code | Meaning | Standard REST Usage |
+| :--- | :--- | :--- |
+| **`200 OK`** | Request succeeded | `GET`, `PUT`, `PATCH` operations returning data. |
+| **`201 Created`** | Resource successfully created | `POST` creation requests. Returns the created item in payload. |
+| **`204 No Content`** | Request succeeded with no body | `DELETE` operations or updates returning no body payload. |
+| **`400 Bad Request`** | Malformed client syntax | Invalid parameter types (e.g. string ID passed instead of number). |
+| **`404 Not Found`** | Resource does not exist | Specified ID does not match any record in storage. |
+| **`409 Conflict`** | Unique constraint violation | Uniqueness check fails (e.g. duplicate username/email). |
+| **`422 Unprocessable`** | Business validation failure | Missing mandatory creation fields or invalid data formats. |
+| **`500 Internal Error`** | Unhandled server exception | Unexpected database connection failures or code bugs. |
 
 ---
 
-## 3. Offset vs. Cursor Pagination Execution Flow
+## 2. Standard Response Envelope & Full CRUD (`block1`)
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as API Client
-    participant API as Express API Endpoint
-    participant DB as Database Engine
-
-    alt Offset-Based Pagination (GET /items?page=2&limit=10)
-        Client->>API: GET /items?page=2&limit=10
-        API->>DB: SELECT * FROM items LIMIT 10 OFFSET 10
-        DB-->>Client: Returns Page 2 (Slow on deep pages: OFFSET 1000000!)
-    else Cursor-Based Pagination (GET /items?cursor=eyJpZCI6MTAxfQ==&limit=10)
-        Client->>API: GET /items?cursor=eyJpZCI6MTAxfQ==&limit=10
-        API->>DB: SELECT * FROM items WHERE id > 101 ORDER BY id ASC LIMIT 10
-        DB-->>Client: Returns Page 2 (Instant O(log N) indexed lookup on any depth!)
-    end
-```
-
----
-
-## 4. Practical Implementation Showcase: Production REST Controller
+A standardized JSON envelope format provides client applications with predictable response structures:
 
 ```javascript
-const express = require("express");
+const express = require('express');
 const app = express();
-
 app.use(express.json());
 
-// In-Memory Product Database Store
-let productRepository = [
-  { id: 101, title: "Enterprise Workstation", price: 2500, category: "hardware" },
-  { id: 102, title: "Wireless Mechanical Keyboard", price: 150, category: "peripherals" },
-  { id: 103, title: "4K Monitor 32 Inch", price: 700, category: "peripherals" }
-];
+let citizens = [];
+let nextId = 1;
 
-// 1. GET ALL (Filter, Sort, and Paginate)
-app.get("/api/v1/products", (req, res) => {
-  const { category, minPrice, maxPrice, page = 1, limit = 10 } = req.query;
+// Envelope helper functions
+function successResponse(data, meta = {}) {
+  return { success: true, data, ...meta };
+}
 
-  let filtered = [...productRepository];
+function errorResponse(message, details = null) {
+  const err = { success: false, error: { message } };
+  if (details) err.error.details = details;
+  return err;
+}
 
-  if (category) {
-    filtered = filtered.filter((p) => p.category === String(category).toLowerCase());
+// 1. GET /citizens - List all resources (200 OK)
+app.get('/citizens', (req, res) => {
+  res.status(200).json(successResponse(citizens));
+});
+
+// 2. GET /citizens/:id - Retrieve single resource by ID
+app.get('/citizens/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json(errorResponse('ID must be a number'));
+  
+  const citizen = citizens.find(c => c.id === id);
+  if (!citizen) return res.status(404).json(errorResponse(`Citizen ${id} not found`));
+  res.status(200).json(successResponse(citizen));
+});
+
+// 3. POST /citizens - Create new resource (201 Created)
+app.post('/citizens', (req, res) => {
+  const { name, age, status, occupation } = req.body;
+  if (!name || !age) return res.status(422).json(errorResponse('name and age are required'));
+  if (citizens.some(c => c.name === name)) return res.status(409).json(errorResponse(`Citizen "${name}" already exists`));
+
+  const newCitizen = { id: nextId++, name, age, status: status || 'pending', occupation: occupation || 'unspecified' };
+  citizens.push(newCitizen);
+  res.status(201).json(successResponse(newCitizen));
+});
+
+// 4. PUT /citizens/:id - Full Replace (All fields required)
+app.put('/citizens/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const index = citizens.findIndex(c => c.id === id);
+  if (index === -1) return res.status(404).json(errorResponse(`Citizen ${id} not found`));
+
+  const { name, age, status, occupation } = req.body;
+  if (!name || !age || !status || !occupation) {
+    return res.status(422).json(errorResponse('PUT requires all fields: name, age, status, occupation'));
   }
-  if (minPrice) {
-    filtered = filtered.filter((p) => p.price >= Number(minPrice));
-  }
-  if (maxPrice) {
-    filtered = filtered.filter((p) => p.price <= Number(maxPrice));
-  }
+  citizens[index] = { id, name, age, status, occupation };
+  res.status(200).json(successResponse(citizens[index]));
+});
 
-  // Calculate Pagination Slices
-  const pageNum = Math.max(1, Number(page));
-  const limitNum = Math.max(1, Math.min(100, Number(limit))); // Cap limit at 100
-  const startIndex = (pageNum - 1) * limitNum;
-  const paginatedItems = filtered.slice(startIndex, startIndex + limitNum);
+// 5. DELETE /citizens/:id - Remove resource (204 No Content)
+app.delete('/citizens/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const index = citizens.findIndex(c => c.id === id);
+  if (index === -1) return res.status(404).json(errorResponse(`Citizen ${id} not found`));
+  
+  citizens.splice(index, 1);
+  res.status(204).end();
+});
+```
 
-  // Standardized Success Envelope
+---
+
+## 3. Filtering, Sorting, & Pagination Engine (`block2`)
+
+Mount search and collection query routes (e.g. `/citizens/search`) **before** parameterized routes (e.g. `/citizens/:id`) to prevent path matching collisions. Execute operations in strict pipeline order: **Filter $\to$ Sort $\to$ Paginate**.
+
+```javascript
+app.get('/citizens/search', (req, res) => {
+  let results = [...citizens];
+
+  // 1. Filtering Phase
+  const { status, occupation, minAge, maxAge } = req.query;
+  if (status) results = results.filter(c => c.status === status);
+  if (occupation) results = results.filter(c => c.occupation === occupation);
+  if (minAge) results = results.filter(c => c.age >= parseInt(minAge, 10));
+  if (maxAge) results = results.filter(c => c.age <= parseInt(maxAge, 10));
+
+  // 2. Sorting Phase
+  const sortField = req.query.sort || 'id';
+  const sortOrder = req.query.order === 'desc' ? -1 : 1;
+  results.sort((a, b) => {
+    if (a[sortField] < b[sortField]) return -1 * sortOrder;
+    if (a[sortField] > b[sortField]) return 1 * sortOrder;
+    return 0;
+  });
+
+  // 3. Pagination Phase
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  const total = results.length;
+  const totalPages = Math.ceil(total / limit);
+  const start = (page - 1) * limit;
+
   res.status(200).json({
-    status: "success",
-    results: paginatedItems.length,
-    totalRecords: filtered.length,
+    success: true,
+    data: results.slice(start, start + limit),
     pagination: {
-      currentPage: pageNum,
-      limit: limitNum,
-      totalPages: Math.ceil(filtered.length / limitNum)
-    },
-    data: {
-      products: paginatedItems
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
     }
   });
 });
+```
 
-// 2. POST CREATE (201 Created)
-app.post("/api/v1/products", (req, res) => {
-  const { title, price, category } = req.body;
+---
 
-  if (!title || !price) {
-    return res.status(400).json({
-      status: "fail",
-      error: { message: "Fields 'title' and 'price' are required" }
-    });
+## 4. Partial Updates (`PATCH`) & Conflict Detection (`block3`)
+
+Unlike `PUT`, which requires a complete representation of the object, `PATCH` modifies only specified fields. Validating input property whitelists prevents accidental property injection.
+
+```javascript
+app.patch('/citizens/:id', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const index = citizens.findIndex(c => c.id === id);
+  if (index === -1) return res.status(404).json(errorResponse(`Citizen ${id} not found`));
+
+  const allowedFields = ['name', 'age', 'status', 'occupation'];
+  const updates = {};
+  const unknownFields = [];
+
+  // Filter allowed fields vs unknown fields
+  for (const [key, value] of Object.entries(req.body)) {
+    if (allowedFields.includes(key)) updates[key] = value;
+    else if (key !== 'id') unknownFields.push(key);
   }
 
-  const newProduct = {
-    id: Date.now(),
-    title,
-    price: Number(price),
-    category: category || "general"
-  };
+  if (unknownFields.length > 0) return res.status(400).json(errorResponse(`Unknown fields: ${unknownFields.join(', ')}`));
+  if (Object.keys(updates).length === 0) return res.status(400).json(errorResponse('No valid fields to update'));
 
-  productRepository.push(newProduct);
-
-  res.status(201).json({
-    status: "success",
-    data: { product: newProduct }
-  });
-});
-
-// 3. DELETE BY ID (204 No Content)
-app.delete("/api/v1/products/:id", (req, res) => {
-  const id = Number(req.params.id);
-  const exists = productRepository.some((p) => p.id === id);
-
-  if (!exists) {
-    return res.status(404).json({
-      status: "fail",
-      error: { message: `Product with ID ${id} does not exist` }
-    });
+  // Unique constraint validation (409 Conflict)
+  if (updates.name) {
+    const conflict = citizens.find(c => c.name === updates.name && c.id !== id);
+    if (conflict) return res.status(409).json(errorResponse(`Name "${updates.name}" is taken`));
   }
 
-  productRepository = productRepository.filter((p) => p.id !== id);
-
-  // 204 No Content requires an EMPTY body payload!
-  res.status(204).send();
-});
-
-// Start Server
-app.listen(3000, () => {
-  console.log("RESTful API Server running on port 3000");
+  Object.assign(citizens[index], updates);
+  res.status(200).json(successResponse(citizens[index]));
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Use Plural Nouns for URIs**: Define endpoints with plural nouns (`/api/v1/products`, `/api/v1/users`) representing collections, avoiding verb-based path names like `/getAllProducts`.
-2. **Return `201 Created` and `204 No Content` Correctly**: Return `201 Created` with the newly formed object for successful `POST` operations, and `204 No Content` (with an empty body) for successful `DELETE` operations.
-3. **Always Version APIs via URL Prefixes**: Prefix all API routes with `/api/v1/` to ensure breaking backend changes can be released cleanly under `/api/v2/` without breaking legacy client integrations.
-4. **Cap Max Pagination Limit Constraints**: Always validate and cap requested pagination `limit` parameters (e.g. `Math.min(100, Number(req.query.limit))`) to protect databases from memory exhaustion attacks.
-
+1. **Nouns Over Verbs**: Define URI paths using plural resource nouns (`/citizens`) and convey actions using standard HTTP verbs (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
+2. **PUT vs. PATCH**: Use `PUT` for complete resource overwrites (requiring all mandatory fields) and `PATCH` for partial property updates.
+3. **Idempotency Guarantees**: `GET`, `PUT`, and `DELETE` requests are idempotent (repeated calls yield identical server states), whereas `POST` creates new resources on every call.
+4. **Pipeline Processing Order**: Always apply data processing in the sequence: **Filter $\to$ Sort $\to$ Paginate**.
+5. **Conflict Status Code**: Return `409 Conflict` whenever a creation or update operation violates database uniqueness constraints.

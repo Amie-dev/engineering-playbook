@@ -1,151 +1,156 @@
-# Module 03: Route Parameters, Query Strings, and Param Interceptor Middleware
+# Module 03: Route Parameters, Query Strings, & Request Validation
 
-## Overview
+## Theoretical Overview & Resource Identification
 
-Express applications capture dynamic client input through **Route Parameters (`req.params`)** embedded directly in the URL path hierarchy, and **Query Strings (`req.query`)** attached after the URL `?` delimiter.
-
-Mastering the structural difference between identifying resources (Path Parameters) versus filtering/sorting resources (Query Strings), applying **Regex Parameter Constraints**, and leveraging **`app.param()` Interceptor Middleware** for entity pre-loading is essential.
-
----
-
-## 1. Route Parameters vs. Query Strings Architecture
+In web APIs, clients must communicate both **which specific resource** they are requesting and **how** they want that resource formatted or filtered. Express provides two complementary mechanisms on the `req` object:
+1. **Route Parameters (`req.params`)**: Named URL segments specified with a colon (`:paramName`) in the route path. Used to identify specific resources.
+2. **Query Strings (`req.query`)**: Key-value pairs appended after a `?` in the URL (e.g. `?sort=asc&page=2`). Used to configure presentation, filtering, sorting, or pagination.
 
 ```mermaid
 flowchart TD
-    URL[Client Request URL] --> Parser["Express URL Parser"]
-
-    Parser --> PathParams["1. Route Parameters (req.params)<br/>/api/v1/users/:userId/orders/:orderId<br/>- Identifies specific resource hierarchy<br/>- Parsed as String key-value object"]
-
-    Parser --> QueryParams["2. Query Strings (req.query)<br/>/api/v1/users?role=admin&page=2&sort=asc<br/>- Filters, sorts, paginates resource collections<br/>- Parsed via qs / querystring engine"]
-
-    style PathParams fill:#dbeafe,stroke:#1d4ed8
-    style QueryParams fill:#dcfce7,stroke:#15803d
-```
-
-### Route Parameters vs. Query Strings Comparison Matrix
-
-| Aspect | Route Parameters (`req.params`) | Query Strings (`req.query`) |
-| :--- | :--- | :--- |
-| **URL Syntax** | Embedded path segments: `/users/:id` | Suffix search params: `/users?id=101` |
-| **Primary Intent** | **Resource Identification** (Locating specific entity) | **Resource Filtering / Control** (Sorting, pagination) |
-| **HTTP Semantics** | Mandatory path requirement for route match | Optional parameter flags (Route matches without query) |
-| **Rest API Standard** | `/users/101/orders/5` | `/orders?userId=101&status=PAID` |
-| **Validation Layer** | `app.param()` or URL Regex | Joi / Zod Query Schema Validation |
-
----
-
-## 2. Parameter Interceptor Middleware Flow (`app.param()`)
-
-`app.param()` registers middleware that automatically triggers whenever a specific named route parameter (e.g. `:userId`) is present in the matched route path:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as API Client
-    participant Router as Express Router
-    participant ParamMw as app.param('userId') Interceptor
-    participant Handler as Route Handler (GET /users/:userId)
-
-    Client->>Router: GET /users/101
-    Router->>ParamMw: 1. Detects ':userId' param (id = "101")
-    ParamMw->>ParamMw: 2. Validates ID & Fetches User from DB
+    RequestURL["URL: /stations/NDLS/trains/12301?sort=name&order=desc"] --> ExpressParser["Express URL Parser Engine"]
     
-    alt User Found in DB
-        ParamMw->>ParamMw: 3. Attaches entity -> req.user
-        ParamMw->>Handler: 4. Calls next() -> Control passed to handler
-        Handler-->>Client: 5. Returns 200 OK { user: req.user }
-    else Invalid ID / User Not Found
-        ParamMw-->>Client: Returns 400 Bad Request / 404 Not Found
-    end
+    ExpressParser --> RouteParams["req.params (Resource Identity)<br/>{ stationCode: 'NDLS', trainCode: '12301' }"]
+    ExpressParser --> QueryParams["req.query (Presentation & View Config)<br/>{ sort: 'name', order: 'desc' }"]
+    
+    RouteParams --> DBQuery["Target Database Query"]
+    QueryParams --> DBQuery
+    DBQuery --> Response["Formatted JSON Response"]
 ```
+
+### Real-World Analogy: Indian Railway PNR Lookup
+Think of Clerk Sharma at the Indian Railways ticket counter:
+- **Route Parameter (`/pnr/4521389076`)**: PNR number `4521389076` uniquely identifies the exact passenger reservation record (Resource Identity).
+- **Query Strings (`/trains?class=rajdhani&page=1&limit=10`)**: Filters the train display board to show only Rajdhani express trains, paginated 10 records per page (View Config).
 
 ---
 
-## 3. Regex Constrained Route Parameter Matching
+## 1. Route Parameters vs. Query Strings Comparison Matrix
 
-```mermaid
-flowchart TD
-    RegexRoute["Route Definition: GET /users/:userId(\\d+)"] --> Match{Incoming URL Request}
-
-    Match -- "GET /users/101 (Digits only)" --> Pass["MATCHES ROUTE! Executed Handler"]
-    Match -- "GET /users/abc (Non-digits)" --> Fail["FAILS ROUTE MATCH! Bypasses Handler -> 404"]
-
-    style Pass fill:#dcfce7,stroke:#15803d
-    style Fail fill:#fee2e2,stroke:#dc2626
-```
+| Property | Route Parameters (`req.params`) | Query Strings (`req.query`) |
+| :--- | :--- | :--- |
+| **URL Syntax** | Embedded in path: `/trains/:id` | Appended after `?`: `/trains?class=rajdhani` |
+| **Primary Purpose** | Resource Identification (**WHICH** item). | Filtering, Sorting, Pagination (**HOW** to view). |
+| **Mandatory Status** | Mandatory part of the matching URL route pattern. | Optional. Missing query keys evaluate to `undefined`. |
+| **Data Types** | Always parsed as `String` (Auto-decoded in Express 5). | Always parsed as `String` or `Array` (Needs explicit type casting). |
+| **REST Standard** | `/resources/:id` | `/resources?filter=value&sort=key` |
 
 ---
 
-## 4. Practical Implementation Showcase: Param Interceptor & Query Parser
+## 2. Route Parameters & Query Strings (`block1_paramsAndQuery`)
+
+Express 5 automatically URL-decodes parameter values (`%20` becomes a space). Query parameters are parsed into key-value strings; numbers must be explicitly converted using `parseInt()`.
 
 ```javascript
-const express = require("express");
+const express = require('express');
 const app = express();
 
-app.use(express.json());
+const catalog = {
+  1: { id: 1, name: 'Rajdhani Express', from: 'NDLS', to: 'BCT', class: 'rajdhani' },
+  2: { id: 2, name: 'Shatabdi Express', from: 'NDLS', to: 'CDG', class: 'shatabdi' }
+};
 
-// Simulated Database Repository
-const mockUserDatabase = new Map([
-  [101, { id: 101, name: "Priya Sharma", role: "ADMIN" }],
-  [102, { id: 102, name: "Alex Chen", role: "DEVELOPER" }]
-]);
+// 1. Single Route Parameter (Resource Identification)
+app.get('/trains/:id', (req, res) => {
+  const train = catalog[req.params.id];
+  if (!train) return res.status(404).json({ error: `Train ${req.params.id} not found` });
+  res.json(train);
+});
 
-// 1. Parameter Interceptor Middleware for ':userId'
-app.param("userId", (req, res, next, value) => {
-  console.log(`🔍 [PARAM INTERCEPTOR] Intercepted parameter userId = "${value}"`);
+// 2. Query Strings for Filtering & Pagination
+app.get('/trains', (req, res) => {
+  const { class: trainClass, page = '1', limit = '10' } = req.query;
+  let results = Object.values(catalog);
   
-  const numericId = Number(value);
-  if (isNaN(numericId) || numericId <= 0) {
-    return res.status(400).json({ error: "INVALID_PARAMETER", message: "User ID must be a positive number" });
-  }
+  if (trainClass) results = results.filter((t) => t.class === trainClass);
 
-  const user = mockUserDatabase.get(numericId);
-  if (!user) {
-    return res.status(404).json({ error: "USER_NOT_FOUND", message: `No user exists with ID ${numericId}` });
-  }
+  // Cast string query values to integers
+  const pageNum = parseInt(page, 10);
+  const limitNum = parseInt(limit, 10);
+  const start = (pageNum - 1) * limitNum;
 
-  // Pre-load entity into request object!
-  req.targetUser = user;
-  next(); // Proceed to route handler
-});
-
-// 2. Route consuming pre-loaded param object
-app.get("/api/v1/users/:userId", (req, res) => {
-  // req.targetUser is guaranteed to exist and be valid!
-  res.status(200).json({ success: true, user: req.targetUser });
-});
-
-// 3. Regex Constrained Route (Only matches numeric IDs)
-app.get("/api/v1/orders/:orderId(\\d+)", (req, res) => {
-  res.status(200).json({ orderId: Number(req.params.orderId), status: "DISPATCHED" });
-});
-
-// 4. Route consuming Query Strings for Pagination & Filtering
-app.get("/api/v1/search", (req, res) => {
-  const { q, page = 1, limit = 10, sort = "desc" } = req.query;
-
-  res.status(200).json({
-    query: q || null,
-    pagination: {
-      page: Number(page),
-      limit: Number(limit)
-    },
-    sortOrder: sort
+  res.json({
+    total: results.length,
+    page: pageNum,
+    limit: limitNum,
+    data: results.slice(start, start + limitNum)
   });
-});
-
-// Start Server
-app.listen(3000, () => {
-  console.log("Route Params Server running on port 3000");
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Multiple Parameters, Validation, & Combination (`block2_validationAndMultipleParams`)
 
-1. **Use `app.param()` to DRY Up Database Lookups**: Intercepting dynamic IDs with `app.param()` eliminates repetitive `findById()` database fetching logic across multiple controllers.
-2. **Path Params for Identification, Query Strings for Filtering**: Use path parameters (`/users/:id`) for required resource identifiers and query parameters (`/users?status=active`) for optional filters, sorting, and pagination.
-3. **Always Coerce and Sanitize Input Types**: `req.params` and `req.query` values are parsed as raw Strings. Always convert numeric inputs (`Number(req.params.id)`) and validate against injection attacks before database queries.
-4. **Use Regex Constraints for Precise Matching**: Constrain route parameters with regex (e.g. `:id(\\d+)` or `:uuid([0-9a-fA-F-]+)`) to prevent string paths from accidentally matching numeric endpoints.
+Route parameters can be nested to reflect hierarchical resource relationships (e.g. `/stations/:stationCode/trains/:trainCode`). Parameter inputs must be validated to ensure system safety.
 
+```javascript
+const app = express();
+
+const stations = {
+  NDLS: {
+    name: 'New Delhi',
+    trains: {
+      12301: { code: '12301', name: 'Rajdhani Express' },
+      12002: { code: '12002', name: 'Shatabdi Express' }
+    }
+  }
+};
+
+// 1. Multiple Nested Route Parameters
+app.get('/stations/:stationCode/trains/:trainCode', (req, res) => {
+  const { stationCode, trainCode } = req.params;
+  const station = stations[stationCode];
+  if (!station) return res.status(404).json({ error: `Station '${stationCode}' not found` });
+  
+  const train = station.trains[trainCode];
+  if (!train) return res.status(404).json({ error: `Train '${trainCode}' not at '${stationCode}'` });
+  
+  res.json({ station: station.name, train });
+});
+
+// 2. Custom Parameter Validation Helper Function
+function isPositiveInt(str) {
+  if (str.length === 0) return false;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] < '0' || str[i] > '9') return false;
+  }
+  return parseInt(str, 10) > 0;
+}
+
+app.get('/pnr/:pnrNumber', (req, res) => {
+  const { pnrNumber } = req.params;
+  if (!isPositiveInt(pnrNumber)) {
+    return res.status(400).json({
+      error: 'pnrNumber must be a positive integer',
+      received: pnrNumber
+    });
+  }
+  res.json({ pnrNumber: parseInt(pnrNumber, 10), status: `PNR #${pnrNumber} confirmed` });
+});
+
+// 3. Combining Resource Params + Presentation Query Options
+app.get('/stations/:stationCode/trains', (req, res) => {
+  const { stationCode } = req.params;
+  const { sort = 'name', order = 'asc' } = req.query;
+  const station = stations[stationCode];
+  if (!station) return res.status(404).json({ error: `Station '${stationCode}' not found` });
+
+  let trains = Object.values(station.trains);
+  trains.sort((a, b) => {
+    const cmp = a[sort] < b[sort] ? -1 : a[sort] > b[sort] ? 1 : 0;
+    return order === 'desc' ? -cmp : cmp;
+  });
+
+  res.json({ station: station.name, sort, order, trains });
+});
+```
+
+---
+
+## Key Takeaways
+
+1. **Params Identify, Queries Configure**: Use `req.params` for identifying specific resources (`/trains/12301`) and `req.query` for modifying the view (`?sort=asc&limit=10`).
+2. **Explicit Type Casting**: Both `req.params` and `req.query` values are strings. Convert numeric strings to numbers (`parseInt(val, 10)`) before arithmetic or database lookups.
+3. **Express 5 Decoding**: Express 5 automatically decodes URL-encoded parameter strings (`%20` $\to$ space).
+4. **Defensive Validation**: Always validate route parameters inside handlers or validation middleware before using them to query underlying data stores.

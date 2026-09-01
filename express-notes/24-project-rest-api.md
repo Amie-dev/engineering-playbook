@@ -1,211 +1,239 @@
-# Module 24: Capstone Project — Production REST API Service Architecture
+# Module 24: Capstone Project — PustakBhandar REST API Engine
 
-## Overview
+## Theoretical Overview & Project Architecture
 
-This capstone project implements a production-grade **Enterprise REST API Service** in Express.js, featuring **Controller-Service-Repository Layering**, **Modular Sub-Routers**, **Validation Chains**, **Standardized Envelope Formats**, and **Centralized Error Handling**.
-
-Understanding how to structure enterprise Express backends for maintainability, testability, and clean separation of concerns is essential.
-
----
-
-## 1. Enterprise Controller-Service-Repository Architecture
+The **PustakBhandar REST API** is a production-grade, modular CRUD application demonstrating best-practice RESTful design principles. It incorporates declarative input validation middleware, standardized JSON response envelopes, filtering, sorting, pagination, central error handling, and automated integration testing.
 
 ```mermaid
 flowchart TD
-    Client[API Client] --> Gateway[Express API Gateway / Router]
-
-    subgraph Layered Express REST Application
-        Gateway --> ValMw["1. Request Validation Middleware (Zod / express-validator)"]
-        ValMw --> Controller["2. Controller Layer (HTTP Request/Response Management)"]
-        Controller --> Service["3. Service Layer (Business Logic & Domain Rules)"]
-        Service --> Repository["4. Repository Layer (Database Access & Queries)"]
-        Repository --> DB[(Database Store)]
+    Client["Client App / Integration Test Suite"] --> ExpressApp["Express Application Core"]
+    
+    ExpressApp --> LogJSON["express.json() Parser"]
+    LogJSON --> Router["Router Module: /api/books"]
+    
+    subgraph PustakBhandar Router Engine
+        Router --> GETList["GET /api/books<br/>(Filter + Sort ?sort=-year + Paginate)"]
+        Router --> GETOne["GET /api/books/:id"]
+        Router --> POSTBook["POST /api/books"]
+        Router --> PUTBook["PUT /api/books/:id"]
+        Router --> PATCHBook["PATCH /api/books/:id"]
+        Router --> DELETEBook["DELETE /api/books/:id"]
     end
-
-    Controller -- "Exceptions" --> CentralErr["5. Centralized Error Middleware (err, req, res, next)"]
-    CentralErr --> ErrorRes[JSON Error Envelope Response]
-
-    style Controller fill:#dbeafe,stroke:#1d4ed8
-    style Service fill:#dcfce7,stroke:#15803d
-    style CentralErr fill:#fee2e2,stroke:#dc2626
+    
+    POSTBook --> ValBook["Middleware: validateBook"]
+    PUTBook --> ValId["Middleware: validateBookId"]
+    PUTBook --> ValBook
+    PATCHBook --> ValId
+    DELETEBook --> ValId
+    GETOne --> ValId
+    
+    ValBook -->|Validation Error| AppErr["AppError (400 Bad Request)"]
+    ValId -->|Not Found| AppErr
+    
+    AppErr --> GlobalErrMW["Global Error Middleware (500 / 400 / 404)"]
+    
+    GETList --> EnvResp["envelope(res, data, status, pagination)"]
+    POSTBook --> EnvResp
+    PUTBook --> EnvResp
+    PATCHBook --> EnvResp
+    DELETEBook --> EnvResp
 ```
+
+### Real-World Analogy: Sahitya Akademi Digital Library
+Think of Sharma ji digitizing the Sahitya Akademi historic library:
+- **Master Index (`GET /api/books`)**: Searching books by genre (`?genre=upanyas`) or author (`?author=premchand`), sorted by publication year (`?sort=-year`), delivered in pages of 10 (`pagination`).
+- **Catalog Card Validation (`validateBook`)**: Every submitted manuscript must have a non-empty title and valid publication year before entering the catalog.
+- **Reference Desk Seal (`envelope`)**: Every book delivered to a reader is wrapped in an official gold envelope (`{ success: true, data: ..., pagination: ... }`).
 
 ---
 
-## 2. Request Data Flow & Processing Lifecycle
+## 1. REST API Endpoint Specifications
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as Client App
-    participant Router as Product Router (/api/v1/products)
-    participant Controller as Product Controller
-    participant Service as Product Service
-    participant Repo as Product Repository
-
-    Client->>Router: POST /api/v1/products (Body Payload)
-    Router->>Controller: Invokes createProduct(req, res, next)
-    Controller->>Service: Invokes createProductDomainLogic(payload)
-    Service->>Repo: Invokes saveToDatabase(entity)
-    Repo-->>Service: Returns Saved Entity Record
-    Service-->>Controller: Returns Domain Result
-    Controller-->>Client: 201 Created + Standard JSON Envelope Payload
-```
-
----
-
-## 3. Layered Architectural Component Matrix
-
-```mermaid
-flowchart TD
-    Layers[Express Layered Architecture] --> L1["1. Router Layer (routes/productRoutes.js)<br/>Declares endpoint URI paths and attaches middleware chains"]
-    Layers --> L2["2. Controller Layer (controllers/productController.js)<br/>Extracts req data, calls service layer, formats HTTP res payload"]
-    Layers --> L3["3. Service Layer (services/productService.js)<br/>Executes pure domain business rules, pricing logic, calculations"]
-    Layers --> L4["4. Repository Layer (repositories/productRepository.js)<br/>Handles direct database queries and ORM calls"]
-
-    style L2 fill:#dbeafe,stroke:#1d4ed8
-    style L3 fill:#dcfce7,stroke:#15803d
-```
-
-### Layer Responsibilities & Separation Matrix
-
-| Layer | File / Module | Allowed Responsibilities | Forbidden Responsibilities |
+| HTTP Method | Route Endpoint | Purpose & Parameters | Response Status |
 | :--- | :--- | :--- | :--- |
-| **Router** | `productRoutes.js` | Path definitions, mounting middleware | Business logic, direct DB queries |
-| **Controller** | `productController.js` | Inspecting `req.body`/`params`, setting status codes | Raw SQL/NoSQL queries, complex business rules |
-| **Service** | `productService.js` | Domain logic, data transformation, calculations | Direct HTTP `req`/`res` object access |
-| **Repository** | `productRepository.js` | Database CRUD queries, connection handling | HTTP status code logic, request parsing |
+| **`GET`** | `/api/books` | Returns paginated list. Supports `author`, `genre`, `sort` (`-year`), `page`, `limit`. | `200 OK` |
+| **`GET`** | `/api/books/:id` | Fetches single book by UUID. | `200 OK` / `404 Not Found` |
+| **`POST`** | `/api/books` | Creates new book record. Requires `title`. | `201 Created` / `400 Bad Request` |
+| **`PUT`** | `/api/books/:id` | Full replacement of book details by UUID. | `200 OK` / `400` / `404` |
+| **`PATCH`** | `/api/books/:id` | Partial field updates (`title`, `author`, `genre`, `year`, `pages`). | `200 OK` / `400` / `404` |
+| **`DELETE`** | `/api/books/:id` | Deletes book record by UUID. | `200 OK` / `404 Not Found` |
 
 ---
 
-## 4. Practical Implementation Showcase: Complete Capstone REST API
+## 2. Validation & Response Envelope Architecture (Sections 1–3)
+
+Operational error handling, UUID seed data initialization, and middleware validators:
 
 ```javascript
-const express = require("express");
-const app = express();
+const express = require('express');
+const crypto = require('crypto');
 
-app.use(express.json());
-
-// -----------------------------------------------------------------------------
-// 1. REPOSITORY LAYER (Data Access Abstraction)
-// -----------------------------------------------------------------------------
-class ProductRepository {
-  constructor() {
-    this.products = [
-      { id: 101, title: "Wireless Mechanical Keyboard", price: 150, category: "peripherals" },
-      { id: 102, title: "UltraWide 4K Monitor 34-Inch", price: 850, category: "monitors" }
-    ];
-  }
-
-  async findAll({ category, minPrice }) {
-    let result = [...this.products];
-    if (category) result = result.filter((p) => p.category === category.toLowerCase());
-    if (minPrice) result = result.filter((p) => p.price >= Number(minPrice));
-    return result;
-  }
-
-  async findById(id) {
-    return this.products.find((p) => p.id === Number(id)) || null;
-  }
-
-  async create(data) {
-    const newProduct = { id: Date.now(), ...data };
-    this.products.push(newProduct);
-    return newProduct;
+// 1. Operational Error Class
+class AppError extends Error {
+  constructor(message, statusCode) {
+    super(message);
+    this.statusCode = statusCode;
+    this.isOperational = true;
   }
 }
 
-const productRepo = new ProductRepository();
+// 2. Data Store & Seed Function
+const books = [];
 
-// -----------------------------------------------------------------------------
-// 2. SERVICE LAYER (Business Logic)
-// -----------------------------------------------------------------------------
-class ProductService {
-  async getCatalog(filters) {
-    // Apply domain transformations or discount rules
-    return await productRepo.findAll(filters);
-  }
-
-  async createProduct(payload) {
-    if (!payload.title || !payload.price) {
-      const err = new Error("Product 'title' and 'price' are mandatory");
-      err.statusCode = 400;
-      throw err;
-    }
-    return await productRepo.create({
-      title: payload.title,
-      price: Number(payload.price),
-      category: payload.category ? payload.category.toLowerCase() : "general"
-    });
-  }
+function seedBooks() {
+  const seedData = [
+    { title: 'Godan', author: 'Munshi Premchand', genre: 'upanyas', year: 1936, pages: 312 },
+    { title: 'Gitanjali', author: 'Rabindranath Tagore', genre: 'kavita', year: 1910, pages: 103 },
+    { title: 'Malgudi Days', author: 'R.K. Narayan', genre: 'katha', year: 1943, pages: 256 },
+    { title: 'Train to Pakistan', author: 'Khushwant Singh', genre: 'sahitya', year: 1956, pages: 181 },
+    { title: 'Tamas', author: 'Bhisham Sahni', genre: 'sahitya', year: 1974, pages: 328 },
+    { title: 'The Guide', author: 'R.K. Narayan', genre: 'upanyas', year: 1958, pages: 220 },
+  ];
+  books.length = 0;
+  seedData.forEach(b => books.push({ id: crypto.randomUUID(), ...b, createdAt: new Date().toISOString() }));
 }
 
-const productService = new ProductService();
-
-// -----------------------------------------------------------------------------
-// 3. CONTROLLER LAYER (HTTP Handler)
-// -----------------------------------------------------------------------------
-class ProductController {
-  static async getProducts(req, res, next) {
-    try {
-      const products = await productService.getCatalog(req.query);
-      res.status(200).json({
-        status: "success",
-        results: products.length,
-        data: { products }
-      });
-    } catch (err) {
-      next(err);
-    }
+// 3. Declarative Middleware Guards
+function validateBook(req, res, next) {
+  const { title, year } = req.body;
+  if (!title || typeof title !== 'string' || title.trim().length === 0) {
+    return next(new AppError('Title is required and must be a non-empty string', 400));
   }
-
-  static async createProduct(req, res, next) {
-    try {
-      const product = await productService.createProduct(req.body);
-      res.status(201).json({
-        status: "success",
-        data: { product }
-      });
-    } catch (err) {
-      next(err);
+  if (year !== undefined) {
+    const numYear = Number(year);
+    if (isNaN(numYear) || numYear < -3000 || numYear > new Date().getFullYear() + 1) {
+      return next(new AppError('Year must be a valid number', 400));
     }
+    req.body.year = numYear;
   }
+  next();
 }
 
-// -----------------------------------------------------------------------------
-// 4. ROUTER LAYER
-// -----------------------------------------------------------------------------
-const productRouter = express.Router();
-productRouter.get("/", ProductController.getProducts);
-productRouter.post("/", ProductController.createProduct);
+function validateBookId(req, res, next) {
+  const book = books.find(b => b.id === req.params.id);
+  if (!book) return next(new AppError(`Book with id '${req.params.id}' not found`, 404));
+  req.book = book; // Attach pre-validated book to request
+  next();
+}
 
-app.use("/api/v1/products", productRouter);
-
-// -----------------------------------------------------------------------------
-// 5. CENTRALIZED ERROR MIDDLEWARE
-// -----------------------------------------------------------------------------
-app.use((err, req, res, next) => {
-  const statusCode = err.statusCode || 500;
-  res.status(statusCode).json({
-    status: statusCode >= 500 ? "error" : "fail",
-    error: {
-      message: err.message || "Internal Server Error"
-    }
-  });
-});
-
-// Start Server
-app.listen(3000, () => {
-  console.log("Capstone REST API Service running on port 3000");
-});
+// 4. Standardized Response Envelope Helper
+function envelope(res, data, statusCode = 200, pagination = null) {
+  const response = { success: true, data };
+  if (pagination) response.pagination = pagination;
+  return res.status(statusCode).json(response);
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Router Implementation & Filter/Sort Pipeline (Section 4)
 
-1. **Decouple Controllers from Business Logic**: Keep Express controllers thin by delegating complex domain logic and validation rules to dedicated Service and Repository layer classes.
-2. **Never Pass `req`/`res` Objects into Services**: Keep Service classes framework-agnostic by passing primitive arguments (`service.createProduct(payload)`) rather than raw Express `req` or `res` objects.
-3. **Use Standard JSON Envelopes**: Wrap JSON responses in a uniform `{ status, data, results }` envelope across all API endpoints to provide consistent contracts for frontend consumers.
-4. **Delegate Errors to Centralized Error Middleware**: Forward all caught async errors to `next(err)` so centralized error middleware handles formatting and HTTP status codes consistently.
+```javascript
+function createBookRouter() {
+  const router = express.Router();
 
+  // GET /api/books - List with Filtering, Sorting, and Pagination
+  router.get('/', (req, res) => {
+    let result = [...books];
+
+    // Filter by Author & Genre
+    if (req.query.author) {
+      const q = req.query.author.toLowerCase();
+      result = result.filter(b => b.author.toLowerCase().includes(q));
+    }
+    if (req.query.genre) {
+      result = result.filter(b => b.genre.toLowerCase() === req.query.genre.toLowerCase());
+    }
+
+    // Sort (?sort=-year prefix minus convention)
+    if (req.query.sort) {
+      const field = req.query.sort.replace(/^-/, '');
+      const order = req.query.sort.startsWith('-') ? -1 : 1;
+      result.sort((a, b) => (a[field] < b[field] ? -1 : a[field] > b[field] ? 1 : 0) * order);
+    }
+
+    // Pagination
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
+    const totalItems = result.length;
+    const totalPages = Math.ceil(totalItems / limit);
+    const start = (page - 1) * limit;
+
+    envelope(res, result.slice(start, start + limit), 200, {
+      page, limit, totalItems, totalPages,
+      hasNextPage: page < totalPages, hasPrevPage: page > 1,
+    });
+  });
+
+  router.get('/:id', validateBookId, (req, res) => envelope(res, req.book));
+
+  router.post('/', validateBook, (req, res) => {
+    const { title, author, genre, year, pages } = req.body;
+    const newBook = {
+      id: crypto.randomUUID(),
+      title: title.trim(),
+      author: author || 'Unknown',
+      genre: genre || 'uncategorized',
+      year: year || null,
+      pages: pages || null,
+      createdAt: new Date().toISOString(),
+    };
+    books.push(newBook);
+    envelope(res, newBook, 201);
+  });
+
+  router.put('/:id', validateBookId, validateBook, (req, res) => {
+    const i = books.findIndex(b => b.id === req.params.id);
+    const { title, author, genre, year, pages } = req.body;
+    books[i] = {
+      ...books[i],
+      title: title.trim(),
+      author: author || books[i].author,
+      genre: genre || books[i].genre,
+      year: year !== undefined ? year : books[i].year,
+      pages: pages !== undefined ? pages : books[i].pages,
+      updatedAt: new Date().toISOString(),
+    };
+    envelope(res, books[i]);
+  });
+
+  router.delete('/:id', validateBookId, (req, res) => {
+    const i = books.findIndex(b => b.id === req.params.id);
+    const [deleted] = books.splice(i, 1);
+    envelope(res, { message: 'Book deleted', book: deleted });
+  });
+
+  return router;
+}
+```
+
+---
+
+## 4. Application Assembly & Test Suite (Sections 5–7)
+
+```javascript
+function createApp() {
+  const app = express();
+  app.use(express.json());
+  app.use('/api/books', createBookRouter());
+  
+  // 404 Fallback Handler
+  app.use((req, res) => res.status(404).json({ success: false, error: `Route ${req.method} ${req.path} not found` }));
+  
+  // Global Operational Error Handler
+  app.use((err, req, res, next) => {
+    const sc = err.statusCode || 500;
+    res.status(sc).json({ success: false, error: err.isOperational ? err.message : 'Internal Server Error' });
+  });
+  return app;
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Modular Architecture**: Splitting routes into `express.Router()` sub-modules keeps complex applications organized and maintainable.
+2. **Minus-Prefix Sorting**: Using `?sort=-year` for descending sort is an intuitive, widely adopted REST convention.
+3. **Decoupled Validation**: Move validation logic into dedicated middleware functions (`validateBook`, `validateBookId`) to keep controllers thin and focused strictly on data transformation.
+4. **Predictable JSON Envelopes**: Consistent `{ success: true, data: ..., pagination: ... }` response envelopes simplify client-side integration.

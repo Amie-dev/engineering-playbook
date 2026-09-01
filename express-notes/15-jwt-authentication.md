@@ -1,185 +1,185 @@
-# Module 15: Stateless JWT Authentication, RBAC Authorization, and Token Rotation
+# Module 15: Stateless JWT Authentication, Dual Token Architecture, & RBAC
 
-## Overview
+## Theoretical Overview & Stateless Auth Architecture
 
-**JSON Web Token (JWT)** is the open standard (RFC 7519) for compact, URL-safe, stateless authentication. A cryptographically signed JWT contains three base64url-encoded components: **Header**, **Payload (Claims)**, and **Digital Signature**, allowing microservices to verify client identity without database session lookups.
-
-Understanding **Stateless Auth Mechanics**, **Access vs. Refresh Token Rotation**, **Role-Based Access Control (RBAC)**, and **Cryptographic Signing (HS256 vs. RS256)** is essential.
-
----
-
-## 1. Stateless JWT Authentication & Refresh Token Rotation
+**JSON Web Tokens (JWT)** (RFC 7519) provide a compact, URL-safe, self-contained mechanism for transmitting digitally signed claims between two parties. Unlike stateful session authentication, JWTs allow servers to verify client identity and permissions statelessly without querying a database on every request.
 
 ```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as SPA / Mobile App
-    participant Auth as Express Auth Server
-    participant API as Protected Microservice API
-    participant DB as Refresh Token DB / Redis
-
-    Client->>Auth: 1. POST /api/v1/auth/login (User Credentials)
-    Auth->>Auth: 2. Verify Password (bcrypt) & Sign Access + Refresh Tokens
-    Auth->>DB: 3. Store Hashed Refresh Token (Family ID: fam_101)
-    Auth-->>Client: 4. Returns Short-Lived Access Token (15m) + Refresh Token (7d in HttpOnly Cookie)
+flowchart TD
+    Client["Client App"] -->|1. POST /login (Credentials)| AuthServer["Auth Server"]
     
-    note over Client,API: REGULAR AUTHORIZED REQUEST (Access Token)
-    Client->>API: 5. GET /api/v1/resource (Header: Authorization: Bearer <Access_JWT>)
-    API->>API: 6. Cryptographically Verify Signature & Expiration (Zero DB Lookup!)
-    API-->>Client: 7. 200 OK Protected Resource Payload
-
-    note over Client,Auth: ACCESS TOKEN EXPIRED -> REFRESH ROTATION
-    Client->>Auth: 8. POST /api/v1/auth/refresh (Cookie: refreshToken)
-    Auth->>DB: 9. Verify Refresh Token & Rotate (Invalidate Old, Issue New)
-    Auth-->>Client: 10. Returns New Access Token + New Refresh Token
+    AuthServer -->|2. Verify Credentials| IssueTokens["Generate Dual Tokens<br/>- Access Token (15 min, Stateless)<br/>- Refresh Token (7 days, Stored)"]
+    IssueTokens -->|3. Return JSON Tokens| Client
+    
+    Client -->|4. Request with Header: Authorization: Bearer <access_token>| ResourceServer["Express Resource Server"]
+    
+    subgraph Stateless Verification
+        ResourceServer --> VerifySig["HMAC-SHA256 Signature Check (Secret Key)"]
+        VerifySig -->|Timing Safe Equal| ExpCheck["Expiration Check (exp > now)"]
+        ExpCheck -->|Valid| AttachUser["Attach req.user = payload"]
+    end
+    
+    AttachUser --> RBACCheck{"requireRole('admin') Check"}
+    RBACCheck -->|Match| Success["200 OK Response"]
+    RBACCheck -->|Role Mismatch| Forbidden["403 Forbidden"]
 ```
+
+### Real-World Analogy: DigiLocker Identity Verification
+Think of Officer Meena issuing digital identity passes at the DigiLocker verification desk:
+- **Header (Cover)**: States the pass format and encryption algorithm (`HS256`).
+- **Payload (Inner Pages)**: Contains claims about the holder (`sub: 'meena'`, `role: 'admin'`, `exp: 1700000000`). Anyone can open and read the claims (Base64URL encoding is **not** encryption).
+- **Signature (Official Seal)**: Produced using the server's private secret (`HMAC-SHA256`). Verification desks check the seal locally using `crypto.timingSafeEqual()` without contacting HQ. If a citizen tampers with their printed role, the signature fails validation.
+- **Refresh Token**: A long-lived renewal voucher used at the central counter to issue a fresh 15-minute access pass when the original expires.
 
 ---
 
-## 2. JWT Cryptographic Signing: HS256 (Symmetric) vs. RS256 (Asymmetric)
+## 1. Access Tokens vs. Refresh Tokens Architecture Matrix
 
-```mermaid
-flowchart TD
-    SigningChoice[JWT Signing Algorithm] --> Method{Cryptographic Architecture}
-
-    Method -- "1. HS256 (HMAC-SHA256)" --> HS256["HS256 (Symmetric Shared Secret)<br/>- Single secret key used for BOTH signing and verification<br/>- Must share secret across all backend microservices<br/>- Secret leak compromises entire system!"]
-
-    Method -- "2. RS256 (RSA-SHA256) RECOMMENDED" --> RS256["RS256 (Asymmetric Key Pair)<br/>- Auth Server signs JWT using PRIVATE KEY<br/>- Microservices verify JWT using PUBLIC KEY (via JWKS endpoint)<br/>- Microservices cannot forge tokens; zero shared secret leak risk!"]
-
-    style RS256 fill:#dcfce7,stroke:#15803d
-    style HS256 fill:#fef3c7,stroke:#b45309
-```
+| Token Property | Short-Lived Access Token | Long-Lived Refresh Token |
+| :--- | :--- | :--- |
+| **Primary Purpose** | Grants access to protected resource APIs. | Obtains a fresh Access Token upon expiration. |
+| **Lifespan** | Short ($15\text{ minutes}$). | Long ($7\text{ days}$). |
+| **Storage State** | **Stateless** (Verified locally via secret key). | **Stateful** (Stored in database/Redis for revocation). |
+| **Transmission** | Sent in `Authorization: Bearer <token>` header. | Sent in JSON body or `HttpOnly` cookie to `/refresh`. |
+| **Revocation** | Cannot be revoked until it expires naturally. | Immediately revokable by deleting from server store. |
 
 ---
 
-## 3. Role-Based Access Control (RBAC) Guard Pipeline
+## 2. Custom JWT Engine Implementation (`block1`)
 
-```mermaid
-flowchart TD
-    Req[Client Request with JWT] --> JwtMw["1. JWT Verification Middleware<br/>- Decodes Header & Payload<br/>- Verifies Signature & Expiration (exp)<br/>- Attaches decoded payload -> req.user"]
-
-    JwtMw --> RbacCheck{2. RBAC Guard: Has Required Role?}
-
-    RbacCheck -- "req.user.role === 'ADMIN'" --> Pass["Pass Control to Controller (200 OK)"]
-    RbacCheck -- "req.user.role !== 'ADMIN'" --> Fail["Forbidden Error Response (HTTP 403)"]
-
-    style JwtMw fill:#dbeafe,stroke:#1d4ed8
-    style Pass fill:#dcfce7,stroke:#15803d
-    style Fail fill:#fee2e2,stroke:#dc2626
-```
-
-### JWT Token Lifetime & Storage Matrix
-
-| Token Type | Lifespan / TTL | Recommended Storage Location | Security Function |
-| :--- | :--- | :--- | :--- |
-| **Short-Lived Access Token** | **15 Minutes** | In-Memory Application State / Redux | Carries user identity & roles; used for fast API authentication. |
-| **Long-Lived Refresh Token** | **7 Days** | **`HttpOnly`, `Secure`, `SameSite=Strict` Cookie** | Used strictly to request new access tokens; stored securely against XSS. |
-
----
-
-## 4. Practical Implementation Showcase: JWT & RBAC Middleware
+A pure JavaScript implementation of JWT creation and verification using Node's `crypto` module:
 
 ```javascript
-const express = require("express");
-const jwt = require("jsonwebtoken");
+const crypto = require('crypto');
+
+// 1. Base64URL Encoding & Decoding Helpers
+function base64UrlEncode(data) {
+  const str = typeof data === 'string'
+    ? Buffer.from(data, 'utf8').toString('base64')
+    : Buffer.from(JSON.stringify(data), 'utf8').toString('base64');
+  return str.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function base64UrlDecode(str) {
+  let b64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (b64.length % 4 !== 0) b64 += '=';
+  return Buffer.from(b64, 'base64').toString('utf8');
+}
+
+// 2. Cryptographic HMAC-SHA256 Signature Generation
+function createSignature(headerB64, payloadB64, secret) {
+  return crypto.createHmac('sha256', secret)
+    .update(`${headerB64}.${payloadB64}`)
+    .digest('base64')
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+// 3. JWT Signing Function
+function jwtSign(payload, secret, options = {}) {
+  const { expiresIn = 3600 } = options;
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const now = Math.floor(Date.now() / 1000);
+  const fullPayload = { ...payload, iat: now, exp: now + expiresIn };
+  
+  const headerB64 = base64UrlEncode(header);
+  const payloadB64 = base64UrlEncode(fullPayload);
+  const signature = createSignature(headerB64, payloadB64, secret);
+  
+  return `${headerB64}.${payloadB64}.${signature}`;
+}
+
+// 4. Timing-Safe JWT Verification Function
+function jwtVerify(token, secret) {
+  const parts = token.split('.');
+  if (parts.length !== 3) return { valid: false, error: 'Token must have 3 parts' };
+  const [headerB64, payloadB64, providedSig] = parts;
+
+  // Algorithm Verification (Defends against "alg: none" attack)
+  let header;
+  try { header = JSON.parse(base64UrlDecode(headerB64)); } catch { return { valid: false, error: 'Invalid header' }; }
+  if (header.alg !== 'HS256') return { valid: false, error: `Unsupported algorithm: ${header.alg}` };
+
+  // Timing-Safe Signature Check (Prevents Timing Attacks)
+  const expectedSig = createSignature(headerB64, payloadB64, secret);
+  const sigBuf = Buffer.from(providedSig);
+  const expBuf = Buffer.from(expectedSig);
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return { valid: false, error: 'Invalid signature — token tampered' };
+  }
+
+  // Expiration Check
+  let payload;
+  try { payload = JSON.parse(base64UrlDecode(payloadB64)); } catch { return { valid: false, error: 'Invalid payload' }; }
+  if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+    return { valid: false, error: 'Token has expired', expired: true };
+  }
+
+  return { valid: true, payload };
+}
+```
+
+---
+
+## 3. Auth Middleware & Role-Based Access Control (`block2` & `block3`)
+
+Combining Bearer token authentication with Role-Based Access Control (RBAC) middleware factories:
+
+```javascript
+const express = require('express');
 const app = express();
 
-app.use(express.json());
+const JWT_SECRET = 'digilocker-seal-ultra-secret-key-2025';
 
-const JWT_SECRET = process.env.JWT_SECRET || "super_secret_jwt_signing_key_2026";
+// 1. Authentication Middleware
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ success: false, error: { message: 'No Authorization header' } });
+  if (!authHeader.startsWith('Bearer ')) return res.status(401).json({ success: false, error: { message: 'Must use Bearer scheme' } });
 
-// 1. User Authentication Login Endpoint (Generates JWT)
-app.post("/api/v1/auth/login", (req, res) => {
-  const { username, password } = req.body;
+  const token = authHeader.slice(7);
+  const result = jwtVerify(token, JWT_SECRET);
 
-  // Simulated Database Authentication
-  if (username === "priya" && password === "secret123") {
-    const payload = {
-      userId: 101,
-      username: "priya",
-      role: "ADMIN" // RBAC Role Claim
-    };
-
-    // Sign Access Token expiring in 15 minutes
-    const accessToken = jwt.sign(payload, JWT_SECRET, {
-      expiresIn: "15m",
-      issuer: "auth.enterprise.com",
-      audience: "api.enterprise.com"
-    });
-
-    return res.status(200).json({
-      status: "success",
-      tokenType: "Bearer",
-      accessToken,
-      expiresIn: 900 // Seconds
+  if (!result.valid) {
+    return res.status(result.expired ? 401 : 403).json({
+      success: false,
+      error: { message: result.error, ...(result.expired && { code: 'TOKEN_EXPIRED' }) }
     });
   }
 
-  res.status(401).json({ error: "UNAUTHORIZED", message: "Invalid username or password" });
-});
+  req.user = result.payload; // Attach decoded JWT payload to req
+  next();
+}
 
-// 2. JWT Verification Middleware
-const authenticateJWT = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({
-      error: "UNAUTHORIZED",
-      message: "Missing or malformed Authorization Bearer header"
-    });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
-      issuer: "auth.enterprise.com",
-      audience: "api.enterprise.com"
-    });
-
-    req.user = decoded; // Attach claims to request
-    next();
-  } catch (err) {
-    if (err.name === "TokenExpiredError") {
-      return res.status(401).json({ error: "TOKEN_EXPIRED", message: "Access token expired" });
-    }
-    return res.status(403).json({ error: "INVALID_TOKEN", message: "Cryptographic signature validation failed" });
-  }
-};
-
-// 3. Role-Based Access Control (RBAC) Middleware Guard
-const authorizeRoles = (...allowedRoles) => {
+// 2. Role-Based Access Control (RBAC) Middleware Factory
+function requireRole(...allowedRoles) {
   return (req, res, next) => {
-    if (!req.user || !allowedRoles.includes(req.user.role)) {
+    if (!req.user) return res.status(401).json({ success: false, error: { message: 'Auth required' } });
+    if (!allowedRoles.includes(req.user.role)) {
       return res.status(403).json({
-        error: "FORBIDDEN",
-        message: `Role '${req.user?.role}' is not authorized to access this resource`
+        success: false,
+        error: { message: `Access denied. Required: ${allowedRoles.join(' or ')}. Yours: ${req.user.role}` }
       });
     }
-    next(); // Authorized!
+    next();
   };
-};
+}
 
-// Protected Admin Resource Endpoint
-app.get("/api/v1/admin/dashboard", authenticateJWT, authorizeRoles("ADMIN"), (req, res) => {
-  res.status(200).json({
-    message: `Welcome to Admin Dashboard, ${req.user.username}`,
-    user: req.user
-  });
+// Protected Route Definitions
+app.get('/profile', authMiddleware, (req, res) => {
+  res.json({ success: true, data: { user: req.user } });
 });
 
-// Start Server
-app.listen(3000, () => {
-  console.log("JWT & RBAC Server running on port 3000");
+app.get('/admin/dashboard', authMiddleware, requireRole('admin'), (req, res) => {
+  res.json({ success: true, data: { message: 'Admin Dashboard Access Granted' } });
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Keep Access Tokens Short-Lived**: Issue short-lived access tokens (15 minutes) paired with rotated refresh tokens stored in `HttpOnly` cookies to minimize exposure window if a token is intercepted.
-2. **Use RS256 Asymmetric Keys in Microservices**: Use RS256 private/public key pairs in microservice meshes. The Auth Service holds the Private Key to sign tokens, while resource microservices fetch Public Keys via JWKS endpoints (`/.well-known/jwks.json`) to verify tokens offline.
-3. **Never Store Sensitive PII in JWT Payloads**: JWT payloads are base64url-encoded strings that anyone can decode. Never store passwords, SSNs, credit cards, or raw secrets inside unencrypted JWT claims.
-4. **Implement Token Revocation via Redis Blacklists**: To support instant user logout or emergency security revocations before token expiry, store revoked token IDs (`jti`) in a high-speed Redis blacklist.
-
+1. **Decoding vs. Verification**: Base64URL encoding is **not** encryption. Anyone can decode a JWT payload; only the server possessing the secret key can verify its signature.
+2. **Algorithm Verification Guard**: Always verify `header.alg === 'HS256'` to prevent malicious `"alg": "none"` signature bypass attacks.
+3. **Timing-Attack Defense**: Use `crypto.timingSafeEqual()` instead of standard `===` string equality when comparing HMAC signatures.
+4. **Dual Token Balance**: Combine short-lived stateless Access Tokens (15 mins) with long-lived server-tracked Refresh Tokens (7 days) to achieve scalability and immediate user revocation capabilities.
+5. **Decoupled Security Pipeline**: Chain `authMiddleware` (identity verification) followed by `requireRole('admin')` (permission authorization) for modular RBAC endpoints.

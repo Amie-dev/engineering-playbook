@@ -1,170 +1,195 @@
-# Module 19: Rate Limiting Algorithms, HTTP 429 Headers, and Distributed Redis Stores
+# Module 19: Rate Limiting Algorithms, Throttling, & Sliding Window Engine
 
-## Overview
+## Theoretical Overview & Traffic Control
 
-**Rate Limiting** is an essential traffic control mechanism that protects Express applications from brute-force authentication attempts, Web Scraping bots, and Denial-of-Service (DoS) resource exhaustion. Using tools like **`express-rate-limit`** or custom algorithms, Express caps the number of requests an IP key can make within a specified time window.
-
-Understanding **Rate Limiting Algorithms (Fixed Window vs. Sliding Window Counter)**, **Standard Rate Limit Response Headers**, and **Distributed Scaling with Redis Stores** is essential.
-
----
-
-## 1. Rate Limiting Request Interception Pipeline
+**Rate Limiting** is a critical system defense pattern designed to prevent Denial of Service (DoS) attacks, brute-force security probes, and resource exhaustion by capping the number of HTTP requests a client can execute within a specified time window.
 
 ```mermaid
 flowchart TD
-    ClientReq[Incoming Client Request] --> KeyGen["Extract Key Identifier (req.ip / User ID)"]
-
-    KeyGen --> CounterCheck{Query Rate Store: Count < Limit?}
-
-    CounterCheck -- "Yes (Within Limit)" --> Increment["Increment Request Counter in Store<br/>Set Response Headers:<br/>- RateLimit-Limit: 100<br/>- RateLimit-Remaining: 85"]
-    Increment --> RouteController["Execute API Route Controller (200 OK)"]
-
-    CounterCheck -- "No (Limit Exceeded)" --> Block429["Short-Circuit Response (HTTP 429)<br/>Set Headers:<br/>- Retry-After: 45 (Seconds)<br/>- Return 429 Too Many Requests JSON"]
-
-    style Increment fill:#dcfce7,stroke:#15803d
-    style Block429 fill:#fee2e2,stroke:#dc2626
-```
-
----
-
-## 2. Rate Limiting Algorithms: Fixed Window vs. Sliding Window Counter
-
-```mermaid
-flowchart TD
-    AlgoChoice[Select Rate Limiting Algorithm] --> Type{Window Model}
-
-    Type -- "1. Fixed Window Counter" --> Fixed["Fixed Window Counter<br/>- Resets count to 0 at fixed time boundaries (e.g. 12:00, 12:01)<br/>- HAZARD: Boundary Spike Bug!<br/>  100 reqs at 12:00:59 + 100 reqs at 12:01:01 = 200 reqs in 2 secs!"]
-
-    Type -- "2. Sliding Window Counter (RECOMMENDED)" --> Sliding["Sliding Window Counter<br/>- Calculates weighted sum of current & previous window counts<br/>- Smooths out boundary traffic spikes<br/>- Accurate sub-second rate control"]
-
-    style Sliding fill:#dcfce7,stroke:#15803d
-    style Fixed fill:#fee2e2,stroke:#dc2626
-```
-
-### Rate Limiting Store Engine Matrix
-
-| Store Engine | Environment | Pros | Cons / Production Limitations |
-| :--- | :--- | :--- | :--- |
-| **`MemoryStore` (Default)** | Single Node Development | Zero external dependencies; fast RAM lookup | **Cannot scale horizontally**; counters reset on server restart; RAM leaks under heavy IP churn |
-| **`RedisStore` (`rate-limit-redis`)** | Multi-Node Kubernetes Production | **Centralized atomic counter shared across all cluster nodes**; persistent across restarts | Requires Redis cluster infrastructure dependency |
-
----
-
-## 3. Standard HTTP Rate Limit Headers & 429 Response
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as API Client
-    participant Express as Express Rate Limiter Middleware
-    participant Redis as Redis Atomic Counter Store
-
-    Client->>Express: POST /api/v1/auth/login (101st Request, Limit = 100)
-    Express->>Redis: INCRBY rate:ip:203.0.113.195 1
-    Redis-->>Express: Returns Count = 101 (Exceeded!)
+    ClientReq["Incoming HTTP Request"] --> IdentifyKey["Generate Tracking Key<br/>(IP Address or IP:User Combination)"]
     
-    Express-->>Client: 429 Too Many Requests<br/>Header: RateLimit-Limit: 100<br/>Header: RateLimit-Remaining: 0<br/>Header: Retry-After: 45
-    note over Client: Client parses Retry-After header and pauses for 45 seconds!
+    IdentifyKey --> CheckLimit{"Algorithm Check<br/>(Fixed Window or Sliding Window)"}
+    
+    CheckLimit -->|Below Limit (Count <= Max)| Pass["Set X-RateLimit Headers<br/>Call next() -> Target Route"]
+    CheckLimit -->|Limit Exceeded (Count > Max)| Reject["Set HTTP 429 Too Many Requests<br/>Set Retry-After: <seconds><br/>Return JSON Error Payload"]
 ```
+
+### Real-World Analogy: IRCTC Tatkal Ticket Booking Counter
+Think of the 10:00 AM Tatkal ticket booking surge at Indian Railways (IRCTC):
+- **Fixed Window Crowd Control**: The stationmaster allows a maximum of 100 passengers into the ticket hall between 10:00 AM and 10:01 AM. At 10:01 AM, the counter resets completely.
+- **Boundary Burst Problem**: 100 passengers enter at 10:00:59 AM, and another 100 enter at 10:01:01 AM. In a 2-second span, 200 passengers storm the hall, overwhelming the ticket clerks!
+- **Sliding Window Counter**: The stationmaster calculates a weighted rolling window based on time overlap (`effectiveCount = prevWindowCount * overlapWeight + currWindowCount`), smoothing out traffic spikes and eliminating boundary bursts.
 
 ---
 
-## 4. Practical Implementation Showcase: Sliding Window Rate Limiter
+## 1. Rate Limiting Algorithms Comparison Matrix
+
+| Algorithm | Complexity | Memory Usage | Boundary Burst Vulnerability? | Best Use Case |
+| :--- | :--- | :--- | :--- | :--- |
+| **Fixed Window** | $\mathcal{O}(1)$ time | Extremely Low ($\mathcal{O}(N)$ keys). | **Vulnerable**: Allows $2\times \text{max}$ burst at window reset boundary. | Simple, non-critical APIs. |
+| **Sliding Window Counter** | $\mathcal{O}(1)$ time | Low ($\mathcal{O}(N)$ keys). | **Eliminated**: Smooths bursts via weighted time overlap formula. | **Production standard for REST APIs**. |
+| **Token Bucket** | $\mathcal{O}(1)$ time | Low ($\mathcal{O}(N)$ keys). | Allows controlled initial bursts up to bucket capacity. | Network bandwidth throttling. |
+| **Leaky Bucket** | $\mathcal{O}(1)$ time | Queue-bound. | Smooths output rate; drops excess requests immediately. | Processing steady background jobs. |
+
+---
+
+## 2. Fixed Window Rate Limiter Implementation (`block1`)
+
+Tracks request counts per client IP over a fixed duration (e.g. 60 seconds). Returns `HTTP 429` with a `Retry-After` header when limits are breached:
 
 ```javascript
-const express = require("express");
-const app = express();
+const express = require('express');
 
-// Enable trust proxy so rate limiter reads real client IP behind load balancers
-app.set("trust proxy", true);
-app.use(express.json());
+function fixedWindowLimiter(options = {}) {
+  const {
+    windowMs = 60 * 1000,
+    max = 100,
+    message = 'Too many requests, please try again later.',
+    statusCode = 429,
+    headers = true,
+    keyGenerator = (req) => req.ip || req.socket.remoteAddress || 'unknown'
+  } = options;
 
-// In-Memory Sliding Window Store Map: IP -> { windowStart, count }
-const slidingWindowStore = new Map();
+  const store = new Map();
 
-// Custom Sliding Window Rate Limiter Middleware Factory
-const createRateLimiter = (options) => {
-  const { windowMs = 60000, maxLimit = 10, message = "Too many requests" } = options;
+  function getRecord(key) {
+    const now = Date.now();
+    let record = store.get(key);
+    if (!record || now >= record.resetTime) {
+      record = { count: 0, resetTime: now + windowMs };
+      store.set(key, record);
+    }
+    return record;
+  }
 
   return (req, res, next) => {
-    // Extract Client IP Key
-    const clientKey = req.ip || req.socket.remoteAddress;
-    const now = Date.now();
+    const key = keyGenerator(req);
+    const record = getRecord(key);
+    record.count++;
 
-    if (!slidingWindowStore.has(clientKey)) {
-      slidingWindowStore.set(clientKey, { windowStart: now, count: 1 });
-    } else {
-      const record = slidingWindowStore.get(clientKey);
-      const elapsedTime = now - record.windowStart;
+    const remaining = Math.max(0, max - record.count);
+    const resetTimeSeconds = Math.ceil(record.resetTime / 1000);
 
-      if (elapsedTime > windowMs) {
-        // Window expired -> Reset window boundary
-        record.windowStart = now;
-        record.count = 1;
-      } else {
-        // Increment request count
-        record.count++;
-      }
-
-      if (record.count > maxLimit) {
-        const retryAfterSeconds = Math.ceil((windowMs - elapsedTime) / 1000);
-        
-        // Attach Standard Rate Limit Headers
-        res.setHeader("Retry-After", retryAfterSeconds);
-        res.setHeader("RateLimit-Limit", maxLimit);
-        res.setHeader("RateLimit-Remaining", 0);
-        res.setHeader("RateLimit-Reset", Math.ceil((record.windowStart + windowMs) / 1000));
-
-        return res.status(429).json({
-          status: "fail",
-          error: "TOO_MANY_REQUESTS",
-          message: `${message}. Please try again in ${retryAfterSeconds} seconds.`,
-          retryAfterSeconds
-        });
-      }
+    // Standard Rate Limiting Headers
+    if (headers) {
+      res.setHeader('X-RateLimit-Limit', String(max));
+      res.setHeader('X-RateLimit-Remaining', String(remaining));
+      res.setHeader('X-RateLimit-Reset', String(resetTimeSeconds));
     }
 
-    const currentRecord = slidingWindowStore.get(clientKey);
-    res.setHeader("RateLimit-Limit", maxLimit);
-    res.setHeader("RateLimit-Remaining", Math.max(0, maxLimit - currentRecord.count));
-    
+    if (record.count > max) {
+      const retryAfterSeconds = Math.ceil((record.resetTime - Date.now()) / 1000);
+      res.setHeader('Retry-After', String(Math.max(retryAfterSeconds, 1)));
+      return res.status(statusCode).json({
+        error: message,
+        retryAfter: Math.max(retryAfterSeconds, 1)
+      });
+    }
+
     next();
   };
-};
+}
+```
 
-// 1. Strict Auth Rate Limiter (5 requests per 1 minute window)
-const authLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  maxLimit: 5,
-  message: "Too many failed login attempts"
+---
+
+## 3. Sliding Window Counter Limiter Implementation (`block2`)
+
+Weighted overlap calculation eliminates the fixed window boundary burst flaw:
+
+$$\text{effectiveCount} = \left\lfloor \text{prevCount} \times \frac{\text{windowMs} - (\text{now} - \text{currStart})}{\text{windowMs}} \right\rfloor + \text{currCount}$$
+
+```javascript
+function slidingWindowLimiter(options = {}) {
+  const {
+    windowMs = 60 * 1000,
+    max = 100,
+    message = 'Too many requests, please try again later.',
+    statusCode = 429,
+    cleanupIntervalMs = 60 * 1000,
+    keyGenerator = (req) => req.ip || req.socket.remoteAddress || 'unknown'
+  } = options;
+
+  const store = new Map();
+
+  function getEffectiveCount(key) {
+    const now = Date.now();
+    let record = store.get(key);
+    if (!record) {
+      record = { prevCount: 0, prevStart: now - windowMs, currCount: 0, currStart: now };
+      store.set(key, record);
+    }
+
+    if (now - record.currStart >= windowMs) {
+      record.prevCount = record.currCount;
+      record.prevStart = record.currStart;
+      record.currCount = 0;
+      record.currStart = now;
+    }
+
+    // Calculate time overlap weight of previous window
+    const overlapWeight = Math.max(0, (windowMs - (now - record.currStart)) / windowMs);
+    const effectiveCount = Math.floor(record.prevCount * overlapWeight) + record.currCount;
+    return { record, effectiveCount };
+  }
+
+  // Periodic Memory Leak Cleanup (unref() allows clean process shutdown)
+  const cleanupTimer = setInterval(() => {
+    const expiry = Date.now() - (windowMs * 2);
+    for (const [key, record] of store) {
+      if (record.currStart < expiry) store.delete(key);
+    }
+  }, cleanupIntervalMs);
+  cleanupTimer.unref();
+
+  return (req, res, next) => {
+    const key = keyGenerator(req);
+    const { record, effectiveCount } = getEffectiveCount(key);
+    record.currCount++;
+
+    if (effectiveCount + 1 > max) {
+      const retryAfterSeconds = Math.ceil((record.currStart + windowMs - Date.now()) / 1000);
+      res.setHeader('Retry-After', String(Math.max(retryAfterSeconds, 1)));
+      return res.status(statusCode).json({ error: message, retryAfter: Math.max(retryAfterSeconds, 1) });
+    }
+    next();
+  };
+}
+```
+
+---
+
+## 4. Custom Key Generators & Per-Route Limiting
+
+```javascript
+const app = express();
+
+// 1. Global API Rate Limiter (10 req/min per IP)
+const globalLimiter = fixedWindowLimiter({ windowMs: 60000, max: 10 });
+app.get('/api/trains', globalLimiter, (req, res) => res.json({ data: 'train schedule' }));
+
+// 2. High-Security Per-Route Limiter with Compound Key (IP + Passenger Name)
+const tatkalLimiter = fixedWindowLimiter({
+  windowMs: 60000,
+  max: 3, // Aggressive Tatkal Limit: 3 attempts per minute
+  message: 'Too many Tatkal booking attempts',
+  keyGenerator: (req) => {
+    const name = req.body?.passengerName || 'anonymous';
+    return `${req.ip}:${name}`; // Compound rate limit key
+  }
 });
 
-// 2. General API Rate Limiter (100 requests per 15 minute window)
-const apiLimiter = createRateLimiter({
-  windowMs: 15 * 60 * 1000,
-  maxLimit: 100,
-  message: "Global API rate limit exceeded"
-});
-
-// Mount Rate Limiters
-app.post("/api/v1/auth/login", authLimiter, (req, res) => {
-  res.status(200).json({ status: "success", message: "Login attempt processed" });
-});
-
-app.use("/api/v1/", apiLimiter);
-
-// Start Server
-app.listen(3000, () => {
-  console.log("Rate Limiting Server running on port 3000");
+app.post('/tatkal/book', express.json(), tatkalLimiter, (req, res) => {
+  res.json({ message: 'Booking processed', passenger: req.body?.passengerName });
 });
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Use Redis Stores in Kubernetes/Cluster Deployments**: Never rely on default in-memory stores (`MemoryStore`) when running multiple app instances behind a load balancer. Use `rate-limit-redis` to share rate counters centrally in Redis.
-2. **Apply Aggressive Limits to Sensitive Endpoints**: Apply strict rate limits to authentication routes (`/login`, `/register`, `/forgot-password`) to prevent brute-force credential stuffing and password spraying attacks.
-3. **Always Return Standard HTTP `429` & `Retry-After` Headers**: Always send HTTP `429 Too Many Requests` accompanied by `Retry-After` and `RateLimit-*` headers so automated client SDKs can implement backoff strategies cleanly.
-4. **Enable `trust proxy` for Accurate IP Resolution**: Configure `app.set('trust proxy', true)` so rate limiters inspect real client IPs from `X-Forwarded-For` headers rather than rate-limiting your load balancer's IP address.
-
+1. **Sliding Window Superiority**: Always prefer Sliding Window algorithms over Fixed Window counters to eliminate boundary burst vulnerabilities.
+2. **Standard Headers**: Return `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`, and `Retry-After` headers to assist clients in implementing graceful exponential backoff.
+3. **Compound Limit Keys**: Use custom `keyGenerator` functions to rate-limit by user ID, API key, or compound keys (`IP + Username`) rather than IP alone.
+4. **Memory Management**: Use `setInterval` cleanup tasks with `.unref()` to purge stale rate limit records from memory without keeping Node process event loops open.
+5. **Distributed Scale**: In-memory `Map` stores work for single servers; use **Redis** (`rate-limit-redis`) in production multi-instance clusters.
