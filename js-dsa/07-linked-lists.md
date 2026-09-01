@@ -1,185 +1,195 @@
-# Module 07: Linked Lists — Pointer Mechanics, In-Place Reversal, and Cycle Detection
+# Module 07: Linked Lists — Singly, Doubly, and Pointer Manipulation Techniques
 
-## Overview
+## Theoretical Overview & Node Pointer Architecture
 
-A **Linked List** is a linear data structure consisting of discrete node objects allocated dynamically across the heap. Each node stores a data payload and one or more pointer references (`next`, `prev`) to adjacent nodes.
-
-Unlike arrays, linked lists do not store elements in contiguous RAM blocks. This trades direct index lookup ($\mathcal{O}(1)$ array access) for **instant $\mathcal{O}(1)$ head/tail insertions and deletions** without array re-indexing.
-
----
-
-## 1. Linked List Variations & Memory Representations
+A **Linked List** is a linear data structure where elements (nodes) are stored non-contiguously in memory. Each node consists of a **Data Value** and one or more **Pointers (References)** to adjacent nodes.
 
 ```mermaid
-graph LR
-    subgraph Singly Linked List
-        Head1[Head: 10] -->|next| NodeA2[20] -->|next| Tail1[Tail: 30] --> Null1[null]
-    end
-
-    subgraph Doubly Linked List
-        Head2[Head: 10] <-->|prev / next| NodeB2[20] <-->|prev / next| Tail2[Tail: 30]
-        Head2 -->|prev| NullD1[null]
-        Tail2 -->|next| NullD2[null]
-    end
-
-    subgraph Circular Linked List
-        Head3[Head: 10] -->|next| NodeC2[20] -->|next| Tail3[Tail: 30]
-        Tail3 -->|next wraps back to Head!| Head3
+flowchart LR
+    subgraph Singly Linked List Memory Layout
+        Head["Head Node (0x100)"] -->|next| Node2["Node 2 (0x800)"]
+        Node2 -->|next| Node3["Node 3 (0x350)"]
+        Node3 -->|next| Null["null"]
     end
 ```
 
-### Array vs. Linked List Performance Comparison Matrix
+### Real-World Engineering Analogy: Spotify Playlist
+In Spotify, a custom playlist represents a Linked List. Adding or removing a track does not require shifting elements across an array buffer; it simply requires re-linking node pointers (`prev.next = newTrack; newTrack.next = curr`).
 
-| Operations / Characteristics | Dynamic Array (`Array`) | Singly Linked List | Doubly Linked List |
+---
+
+## 1. Array vs Linked List Architecture Comparison
+
+| Metric | Array | Singly Linked List (SLL) | Doubly Linked List (DLL) |
 | :--- | :--- | :--- | :--- |
-| **Index Lookup (`get(i)`)** | **$\mathcal{O}(1)$ Constant** | $\mathcal{O}(N)$ Traversal | $\mathcal{O}(N)$ Traversal |
-| **Prepend (`unshift` / Head)**| $\mathcal{O}(N)$ Re-indexing | **$\mathcal{O}(1)$ Pointer Update** | **$\mathcal{O}(1)$ Pointer Update** |
-| **Append (`push` / Tail)** | $\mathcal{O}(1)$ amortized | **$\mathcal{O}(1)$ (with tail pointer)** | **$\mathcal{O}(1)$** |
-| **Arbitrary Insertion/Deletion**| $\mathcal{O}(N)$ Memmove Copy | $\mathcal{O}(1)$ (once node located) | $\mathcal{O}(1)$ (once node located) |
-| **Cache Locality** | **High** (Contiguous RAM) | Poor (Dispersed Heap Nodes) | Poor (Dispersed Heap Nodes) |
-| **Memory Overhead** | Minimal (Raw values) | Medium (1 pointer per node) | High (2 pointers per node) |
+| **Random Access** | $\mathcal{O}(1)$ instantaneous | $\mathcal{O}(n)$ sequential traversal | $\mathcal{O}(n)$ sequential traversal |
+| **Insert / Delete at Head** | $\mathcal{O}(n)$ shift | **$\mathcal{O}(1)$** | **$\mathcal{O}(1)$** |
+| **Insert / Delete at Tail** | $\mathcal{O}(1)$ amortized | $\mathcal{O}(n)$ (or $\mathcal{O}(1)$ with tail pointer) | **$\mathcal{O}(1)$** |
+| **Delete Arbitrary Node** | $\mathcal{O}(n)$ shift | $\mathcal{O}(1)$ if node pre-given | **$\mathcal{O}(1)$** if node pre-given |
+| **Memory Locality** | High CPU Cache hits | Low (Cache misses) | Low (Cache misses + 2x Pointers) |
 
 ---
 
-## 2. In-Place Linked List Reversal (3-Pointers Pattern)
+## 2. Core Code Implementations
 
-Reversing a linked list in $\mathcal{O}(1)$ auxiliary space requires managing three sliding pointer references: **`prev`**, **`current`**, and **`nextTemp`**.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Prev as prev Pointer (Initial: null)
-    participant Curr as current Pointer (Initial: Node 1)
-    participant Next as nextTemp Pointer
-    participant Nodes as Linked Nodes: [1] -> [2] -> [3] -> null
-
-    Note over Prev,Nodes: STEP 1: Save next node reference
-    Curr->>Next: nextTemp = current.next (Points to Node 2)
-    
-    Note over Prev,Nodes: STEP 2: Reverse link pointer
-    Curr->>Nodes: current.next = prev (Points to null)
-    
-    Note over Prev,Nodes: STEP 3: Advance sliding pointers
-    Curr->>Prev: prev = current (Points to Node 1)
-    Next->>Curr: current = nextTemp (Points to Node 2)
-    
-    Note over Prev,Nodes: Repeat loop until current == null!
-```
-
----
-
-## 3. Floyd's Cycle Detection Algorithm (Fast & Slow Pointers)
-
-To detect if a linked list contains a cycle (loop) in $\mathcal{O}(N)$ time and $\mathcal{O}(1)$ auxiliary space, use **Floyd's Tortoise and Hare Algorithm**:
-
-- **Slow Pointer (`tortoise`)**: Advances 1 step at a time.
-- **Fast Pointer (`hare`)**: Advances 2 steps at a time.
-- **Mathematical Guarantee**: If a loop exists, the fast pointer will eventually catch up and collide with the slow pointer inside the loop.
-
-```mermaid
-flowchart TD
-    Init[Initialize: slow = head, fast = head] --> LoopCond{Is fast != null AND fast.next != null?}
-    
-    LoopCond -- Yes --> AdvancePointers["slow = slow.next<br/>fast = fast.next.next"]
-    AdvancePointers --> CheckCollision{Is slow == fast?}
-
-    CheckCollision -- Yes --> CycleFound["LOOP DETECTED! Return true"]
-    CheckCollision -- No --> LoopCond
-
-    LoopCond -- No --> NoCycle["End of List Reached. Return false (No Cycle)"]
-```
-
----
-
-## 4. Production Linked List Implementation Code
-
+### 1. Singly Linked List (`SinglyLinkedList`)
 ```javascript
-class ListNode {
-  constructor(val, next = null) {
-    this.val = val;
-    this.next = next;
-  }
+class SLLNode {
+  constructor(value) { this.value = value; this.next = null; }
 }
 
 class SinglyLinkedList {
-  constructor() {
-    this.head = null;
-    this.tail = null;
-    this.size = 0;
+  constructor() { this.head = null; this._size = 0; }
+
+  append(value) {
+    const node = new SLLNode(value);
+    if (!this.head) { this.head = node; }
+    else { let c = this.head; while (c.next) c = c.next; c.next = node; }
+    this._size++; return this;
   }
 
-  // O(1) Prepend
-  prepend(val) {
-    const newNode = new ListNode(val, this.head);
-    this.head = newNode;
-    if (!this.tail) this.tail = newNode;
-    this.size++;
+  prepend(value) {
+    const node = new SLLNode(value);
+    node.next = this.head;
+    this.head = node;
+    this._size++; return this;
   }
 
-  // O(1) Append
-  append(val) {
-    const newNode = new ListNode(val);
-    if (!this.head) {
-      this.head = newNode;
-      this.tail = newNode;
-    } else {
-      this.tail.next = newNode;
-      this.tail = newNode;
+  removeAt(index) {
+    if (index < 0 || index >= this._size) throw new RangeError("Out of bounds");
+    let val;
+    if (index === 0) { val = this.head.value; this.head = this.head.next; }
+    else {
+      let c = this.head;
+      for (let i = 0; i < index - 1; i++) c = c.next;
+      val = c.next.value;
+      c.next = c.next.next;
     }
-    this.size++;
-  }
-
-  // O(N) Time, O(1) Auxiliary Space In-Place Reversal
-  reverse() {
-    let prev = null;
-    let current = this.head;
-    this.tail = this.head; // Old head becomes new tail
-
-    while (current !== null) {
-      const nextTemp = current.next; // 1. Save next reference
-      current.next = prev;          // 2. Reverse pointer direction
-      prev = current;               // 3. Move prev forward
-      current = nextTemp;           // 4. Move current forward
-    }
-
-    this.head = prev; // Set new head
-  }
-
-  // O(N) Time, O(1) Space Floyd's Cycle Detection
-  hasCycle() {
-    let slow = this.head;
-    let fast = this.head;
-
-    while (fast !== null && fast.next !== null) {
-      slow = slow.next;
-      fast = fast.next.next;
-
-      if (slow === fast) {
-        return true; // Collision detected! Loop exists.
-      }
-    }
-
-    return false;
+    this._size--; return val;
   }
 }
+```
 
-// Verification
-const list = new SinglyLinkedList();
-list.append(10);
-list.append(20);
-list.append(30);
+### 2. Doubly Linked List (`DoublyLinkedList`)
+Node features both `.next` and `.prev` references, enabling $\mathcal{O}(1)$ `removeLast()`.
 
-list.reverse();
-console.log("Reversed Head Value:", list.head.val); // 30
-console.log("Has Cycle?", list.hasCycle());         // false
+```javascript
+class DLLNode {
+  constructor(value) { this.value = value; this.next = null; this.prev = null; }
+}
+
+class DoublyLinkedList {
+  constructor() { this.head = null; this.tail = null; this._size = 0; }
+
+  append(value) {
+    const node = new DLLNode(value);
+    if (!this.head) { this.head = node; this.tail = node; }
+    else { node.prev = this.tail; this.tail.next = node; this.tail = node; }
+    this._size++; return this;
+  }
+
+  removeLast() {
+    if (!this.tail) return undefined;
+    const val = this.tail.value;
+    if (this.head === this.tail) { this.head = null; this.tail = null; }
+    else { this.tail = this.tail.prev; this.tail.next = null; }
+    this._size--; return val;
+  }
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Essential Pointer Manipulation Patterns
 
-1. **Use Linked Lists when High-Volume Head Insertions are Required**: If your system requires frequent $\mathcal{O}(1)$ prepend operations without dynamic array re-indexing, prefer linked lists.
-2. **Always Guard Against Null Pointer Exceptions**: Always check `current !== null` and `current.next !== null` when traversing linked list pointers to avoid `TypeError: Cannot read property 'next' of null`.
-3. **Use Dummy Head Nodes for Simplified Code**: Creating a temporary dummy sentinel node (`const dummy = new ListNode(0); dummy.next = head;`) eliminates edge-case logic when inserting or deleting the head node.
-4. **Use Floyd's Algorithm for $\mathcal{O}(1)$ Space Cycle Detection**: Detecting cycles via Hash Sets requires $\mathcal{O}(N)$ memory. Floyd's Fast & Slow pointer approach delivers $\mathcal{O}(1)$ space efficiency.
+### 1. Reversing a Linked List (`reverseLinkedList`)
+Flip `next` pointers in-place using `prev`, `curr`, and `next` pointers.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
 
+```javascript
+function reverseLinkedList(head) {
+  let prev = null, curr = head;
+  while (curr !== null) {
+    const next = curr.next;
+    curr.next = prev;
+    prev = curr;
+    curr = next;
+  }
+  return prev; // New head pointer
+}
+```
+
+### 2. Cycle Detection via Floyd's Algorithm (`hasCycle`)
+Detect cyclic loops using Fast & Slow Pointers (Tortoise and Hare).
+- **Strategy**: Move `slow` by 1 step and `fast` by 2 steps. If a loop exists, `fast` and `slow` will inevitably collide inside the cycle.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function hasCycle(head) {
+  let slow = head, fast = head;
+  while (fast && fast.next) {
+    slow = slow.next;
+    fast = fast.next.next;
+    if (slow === fast) return true;
+  }
+  return false;
+}
+```
+
+### 3. Finding Middle Node (`findMiddle`)
+Find the center node of a Linked List in a single pass.
+- **Strategy**: When `fast` pointer reaches the end of the list (moving at $2x$ speed), `slow` pointer (moving at $1x$ speed) rests at the exact mid-point.
+
+```javascript
+function findMiddle(head) {
+  let slow = head, fast = head;
+  while (fast && fast.next) {
+    slow = slow.next;
+    fast = fast.next.next;
+  }
+  return slow.value;
+}
+```
+
+### 4. Merge Two Sorted Lists (`mergeSortedLists`)
+Merge two sorted linked lists into a single sorted list using a Dummy Head node.
+- **Complexity**: Time $\mathcal{O}(n + m)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function mergeSortedLists(h1, h2) {
+  const dummy = new SLLNode(0);
+  let curr = dummy;
+  while (h1 && h2) {
+    if (h1.value <= h2.value) { curr.next = h1; h1 = h1.next; }
+    else { curr.next = h2; h2 = h2.next; }
+    curr = curr.next;
+  }
+  curr.next = h1 || h2;
+  return dummy.next;
+}
+```
+
+### 5. Remove N-th Node From End (`removeNthFromEnd`)
+Remove the $N$-th node from the end of a list in a single pass.
+- **Strategy**: Advance `fast` pointer $N + 1$ steps ahead of `slow`. Advance both pointers together until `fast` reaches `null`. `slow.next` will point directly to the target node for deletion.
+
+```javascript
+function removeNthFromEnd(head, n) {
+  const dummy = new SLLNode(0);
+  dummy.next = head;
+  let fast = dummy, slow = dummy;
+  for (let i = 0; i <= n; i++) fast = fast.next;
+  while (fast) { fast = fast.next; slow = slow.next; }
+  slow.next = slow.next.next;
+  return dummy.next;
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Pointer Rewiring**: Insertion and deletion occur in $\mathcal{O}(1)$ time without shifting elements when pointer references are established.
+2. **Dummy Head Technique**: Simplifies edge case handling for head node mutations.
+3. **Fast & Slow Pointers**: Detects cycles and discovers mid-points in a single $\mathcal{O}(n)$ pass.
+4. **Foundation for Graph/Tree Structures**: Pointer mechanics directly translate to Binary Tree nodes and Graph adjacency lists.

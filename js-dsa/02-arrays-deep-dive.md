@@ -1,145 +1,198 @@
-# Module 02: Array Mechanics, V8 Element Kinds Optimization, and TypedArrays
+# Module 02: Arrays Deep Dive & Algorithmic Patterns
 
-## Overview
+## Theoretical Overview & V8 Memory Internals
 
-In JavaScript, arrays are dynamic objects with special auto-incrementing `length` properties and optimized V8 backing stores.
+An **Array** is a contiguous block of memory allocated to hold elements sequentially. The core advantage of an array is **$\mathcal{O}(1)$ random access**: given an index $i$, the memory address is calculated instantaneously via simple offset math:
 
-Under the hood, Chrome V8 dynamically switches between **Fast Contiguous C++ Vector Backing Stores** and **Slow Dictionary Hashtable Backing Stores**, driven by array density and element data types (**Element Kinds**).
+$$\text{Address}(i) = \text{Base Address} + (i \times \text{Element Size in Bytes})$$
 
----
+```mermaid
+flowchart LR
+    subgraph RAM Memory Allocation
+        Base["Base Addr: 0x1000"] --> Index0["Index 0: 0x1000"]
+        Index0 --> Index1["Index 1: 0x1004"]
+        Index1 --> Index2["Index 2: 0x1008"]
+        Index2 --> Index3["Index 3: 0x100C"]
+    end
+```
 
-## 1. V8 Array Element Kinds Transition Lattice
-
-V8 tracks the internal types of array elements to emit optimized JIT Machine Code. The 6 primary element kinds follow a strict **One-Way Transition Lattice**:
+### V8 Engine "Element Kinds" Architecture
+JavaScript arrays are dynamic object wrappers backed by C++ structures in the V8 engine. V8 classifies arrays into **Element Kinds** based on contained data types and memory density:
 
 ```mermaid
 flowchart TD
-    subgraph PACKED (Dense - Contiguous Memory)
-        PACKED_SMI["PACKED_SMI<br/>- Small Integers 31-bit (-2³⁰ to 2³⁰-1)<br/>- FASTEST CPU Memory Access"]
-        PACKED_DOUBLE["PACKED_DOUBLE<br/>- Floating point numbers & NaN<br/>- Unboxed IEEE-754 double precision"]
-        PACKED_ELEMENTS["PACKED_ELEMENTS<br/>- Strings, Objects, Functions, Mixed types<br/>- Pointer Indirection overhead"]
+    PackSmi["PACKED_SMI<br/>(Small Integers only - FASTEST)"] --> PackDbl["PACKED_DOUBLE<br/>(Contains Floating-Point Floats)"]
+    PackDbl --> PackElem["PACKED_ELEMENTS<br/>(Mixed Types: Objects, Strings)"]
+    
+    PackSmi -->|Create Hole| HoleSmi["HOLEY_SMI"]
+    PackDbl -->|Create Hole| HoleDbl["HOLEY_DOUBLE"]
+    PackElem -->|Create Hole| HoleElem["HOLEY_ELEMENTS<br/>(SLOWEST: Forces Prototype Lookup)"]
 
-        PACKED_SMI -->|Add Float 3.14| PACKED_DOUBLE
-        PACKED_DOUBLE -->|Add String 'hello'| PACKED_ELEMENTS
-        PACKED_SMI -->|Add String 'hello'| PACKED_ELEMENTS
-    end
-
-    subgraph HOLEY (Sparse - Contains Holes / Missing Indices)
-        HOLEY_SMI["HOLEY_SMI<br/>- Integers with missing indices ([1, , 3])"]
-        HOLEY_DOUBLE["HOLEY_DOUBLE<br/>- Doubles with missing indices"]
-        HOLEY_ELEMENTS["HOLEY_ELEMENTS<br/>- Mixed objects with missing indices"]
-
-        HOLEY_SMI -->|Add Float 3.14| HOLEY_DOUBLE
-        HOLEY_DOUBLE -->|Add String 'hello'| HOLEY_ELEMENTS
-        HOLEY_SMI -->|Add String 'hello'| HOLEY_ELEMENTS
-    end
-
-    PACKED_SMI -->|Delete Index / Skip Index| HOLEY_SMI
-    PACKED_DOUBLE -->|Delete Index / Skip Index| HOLEY_DOUBLE
-    PACKED_ELEMENTS -->|Delete Index / Skip Index| HOLEY_ELEMENTS
+    style PackSmi fill:#2e7d32,color:#fff
+    style PackElem fill:#f57c00,color:#fff
+    style HoleElem fill:#c62828,color:#fff
 ```
 
-> [!CAUTION]
-> **One-Way Transition Rule**: Once an array transitions to a degrade state (e.g. from `PACKED_SMI` to `PACKED_ELEMENTS` or `HOLEY`), V8 **NEVER transitions it back**, even if you delete the string or fill the missing hole!
+1. **PACKED_SMI**: Stores raw 31-bit signed small integers. Memory overhead is minimal, and operations bypass object lookup overhead.
+2. **PACKED_DOUBLE**: Stores IEEE 754 64-bit floating-point numbers.
+3. **PACKED_ELEMENTS**: Stores mixed types (e.g., numbers, strings, objects). Elements require boxed object pointers.
+4. **HOLEY variants**: Occur when indices are missing (e.g., `arr[100] = 5` on an array of length 2). V8 must search up the prototype chain for missing keys.
 
----
-
-## 2. Fast Backing Store vs. Slow Dictionary Mode
-
-```mermaid
-graph TD
-    ArrayAccess[Read arr[i]] --> CheckMode{Is Array in Fast Mode or Slow Dictionary Mode?}
-
-    CheckMode -- Fast Mode (Contiguous Array) --> DirectOffset["Direct C++ Pointer Offset:<br/>MemoryAddr = BaseAddr + (i * ElementSize)<br/>Time: O(1) Microsecond Lookup"]
-
-    CheckMode -- Slow Mode (Sparse Array / Large Gaps) --> DictLookup["Hashtable Key Lookup:<br/>V8 performs hash lookup on string key 'i'<br/>Traverses prototype chain if missing!<br/>Time: O(1) Average, High Constant Overhead"]
-```
-
-### When V8 Switches to Slow Dictionary Mode
-If an array is initialized with huge index gaps (e.g. `const arr = []; arr[1000000] = 1;`), V8 abandons memory allocation of 1 million contiguous null slots and converts the array into a **Hashtable Dictionary Object**, severely degrading iteration throughput.
-
----
-
-## 3. Comprehensive Array Operations Complexity Matrix
-
-| Operation | Method / Syntax | Time Complexity | Memory Impact | V8 Internal Action |
-| :--- | :--- | :--- | :--- | :--- |
-| **Index Access** | `arr[i]` | $\mathcal{O}(1)$ | None | Direct RAM pointer offset read. |
-| **End Insert** | `arr.push(x)` | $\mathcal{O}(1)$ amortized | Low | Appends to vector end; resizes capacity $2\times$ if full. |
-| **End Remove** | `arr.pop()` | $\mathcal{O}(1)$ | None | Decrements internal `length` pointer. |
-| **Start Insert** | `arr.unshift(x)` | $\mathcal{O}(n)$ | Medium | Re-indexes all $n$ elements in memory block. |
-| **Start Remove** | `arr.shift()` | $\mathcal{O}(n)$ | Medium | Shifts all remaining $n-1$ element pointers left. |
-| **Arbitrary Mutate**| `arr.splice(i, k)` | $\mathcal{O}(n)$ | Medium | Memory memmove copy for deleted/inserted items. |
-| **Sub-array Copy** | `arr.slice(start, end)` | $\mathcal{O}(k)$ ($k = \text{range}$) | New Allocation | Allocates fresh array buffer for $k$ elements. |
-| **Linear Search** | `arr.indexOf(val)` | $\mathcal{O}(n)$ | None | Sequential loop check from index $0$ to $n-1$. |
-
----
-
-## 4. In-Place Array Algorithms vs. Extra Memory Allocations
-
-Writing high-performance algorithms requires avoiding unnecessary array copying (`slice()`, `concat()`, `map()`) when in-place mutation is permissible.
+> [!WARNING]
+> **Monomorphic Transition Rule**: V8 element kinds only degrade down the hierarchy (e.g., `PACKED_SMI` $\to$ `PACKED_DOUBLE` $\to$ `PACKED_ELEMENTS` $\to$ `HOLEY`). They **never** upgrade back, even if floating-point elements or holes are subsequently deleted!
 
 ```javascript
-// High-Performance In-Place Array Reversal (O(1) Auxiliary Space)
-function reverseArrayInPlace(arr) {
-  let left = 0;
-  let right = arr.length - 1;
+// GOOD: Pre-allocate and fill to preserve PACKED_SMI
+const optimalArray = new Array(100).fill(0); // PACKED_SMI
 
+// BAD: Leaves 100 empty slots (holes)
+const badArray = new Array(100); // Marked HOLEY permanently
+```
+
+---
+
+## 1. Array Operations Complexity Matrix
+
+| Operation | Method / Syntax | Time Complexity | Space Complexity | Explanation |
+| :--- | :--- | :--- | :--- | :--- |
+| **Index Access** | `arr[i]` | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Immediate direct offset computation. |
+| **Push at End** | `arr.push(val)` | $\mathcal{O}(1)$ amortized | $\mathcal{O}(1)$ | Appends element to end of array buffer. |
+| **Pop from End** | `arr.pop()` | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Removes last element without index shifts. |
+| **Unshift at Start**| `arr.unshift(val)`| $\mathcal{O}(n)$ | $\mathcal{O}(1)$ | Re-indexes every single element to the right by +1. |
+| **Shift from Start**| `arr.shift()` | $\mathcal{O}(n)$ | $\mathcal{O}(1)$ | Shifts every single element to the left by -1. |
+| **Splice** | `arr.splice(i, k)`| $\mathcal{O}(n)$ | $\mathcal{O}(1)$ | Re-indexes all subsequent elements after index $i$. |
+| **Linear Search** | `arr.indexOf(x)` | $\mathcal{O}(n)$ | $\mathcal{O}(1)$ | Scans elements sequentially from 0 to $n-1$. |
+
+---
+
+## 2. Core Algorithmic Patterns & Code Walkthroughs
+
+### 1. Two-Pointer Target Sum (`twoSumSorted`)
+Given a **sorted array**, find two indices whose elements sum to `target`.
+- **Strategy**: Maintain two pointers at the boundaries (`left = 0`, `right = n - 1`). If `sum < target`, increment `left`. If `sum > target`, decrement `right`.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function twoSumSorted(sortedArr, target) {
+  let left = 0, right = sortedArr.length - 1;
   while (left < right) {
-    // In-place swap without allocating temporary array instances
-    const temp = arr[left];
-    arr[left] = arr[right];
-    arr[right] = temp;
-
-    left++;
-    right--;
+    const sum = sortedArr[left] + sortedArr[right];
+    if (sum === target) return [left, right];
+    else if (sum < target) left++;
+    else right--;
   }
+  return null;
+}
+```
 
-  return arr;
+### 2. Kadane's Algorithm: Maximum Subarray Sum (`maxSubarraySum`)
+Find the contiguous subarray with the largest sum.
+- **Strategy**: At index $i$, decide whether to extend the existing subarray (`currentSum + arr[i]`) or start a new subarray fresh from `arr[i]`.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function maxSubarraySum(arr) {
+  let maxSum = arr[0], currentSum = arr[0];
+  for (let i = 1; i < arr.length; i++) {
+    currentSum = Math.max(arr[i], currentSum + arr[i]);
+    maxSum = Math.max(maxSum, currentSum);
+  }
+  return maxSum;
+}
+```
+
+### 3. Prefix Sum Array (`buildPrefixSum` & `rangeSum`)
+Compute sum of elements between indices `[left, right]` in $\mathcal{O}(1)$ time following an $\mathcal{O}(n)$ pre-processing step.
+- **Formula**: $\text{RangeSum}(L, R) = P[R + 1] - P[L]$ where $P[i] = \sum_{k=0}^{i-1} \text{arr}[k]$.
+
+```javascript
+function buildPrefixSum(arr) {
+  const prefix = new Array(arr.length + 1).fill(0);
+  for (let i = 0; i < arr.length; i++) prefix[i + 1] = prefix[i] + arr[i];
+  return prefix;
 }
 
-// In-Place Duplicate Removal on Sorted Array (Two-Pointers Pattern)
-function removeDuplicatesSorted(nums) {
-  if (nums.length === 0) return 0;
+function rangeSum(prefix, left, right) {
+  return prefix[right + 1] - prefix[left]; // O(1) query
+}
+```
 
-  let writePointer = 1;
+### 4. Dutch National Flag: 3-Way Partitioning (`dutchNationalFlag`)
+Sort an array of `0`s, `1`s, and `2`s in a single pass in-place.
+- **Strategy**: Use three pointers (`low`, `mid`, `high`).
+  - If `arr[mid] === 0`: Swap `arr[low]` and `arr[mid]`, increment `low` and `mid`.
+  - If `arr[mid] === 1`: Increment `mid`.
+  - If `arr[mid] === 2`: Swap `arr[mid]` and `arr[high]`, decrement `high`.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
 
-  for (let readPointer = 1; readPointer < nums.length; readPointer++) {
-    if (nums[readPointer] !== nums[readPointer - 1]) {
-      nums[writePointer] = nums[readPointer];
-      writePointer++;
+```javascript
+function dutchNationalFlag(arr) {
+  let low = 0, mid = 0, high = arr.length - 1;
+  while (mid <= high) {
+    if (arr[mid] === 0) {
+      [arr[low], arr[mid]] = [arr[mid], arr[low]];
+      low++; mid++;
+    } else if (arr[mid] === 1) {
+      mid++;
+    } else {
+      [arr[mid], arr[high]] = [arr[high], arr[mid]];
+      high--;
     }
   }
+  return arr;
+}
+```
 
-  nums.length = writePointer; // Truncate array in-place!
-  return writePointer;
+### 5. Rotate Array by K Steps via Three Reversals (`rotateArray`)
+Rotate an array to the right by $k$ positions in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ space.
+- **Algorithm**:
+  1. Reverse the entire array.
+  2. Reverse the first $k$ elements.
+  3. Reverse the remaining $n - k$ elements.
+
+```javascript
+function reverseSection(arr, start, end) {
+  while (start < end) {
+    [arr[start], arr[end]] = [arr[end], arr[start]];
+    start++; end--;
+  }
+}
+
+function rotateArray(arr, k) {
+  const n = arr.length;
+  k = k % n;
+  if (k === 0) return arr;
+  reverseSection(arr, 0, n - 1);
+  reverseSection(arr, 0, k - 1);
+  reverseSection(arr, k, n - 1);
+  return arr;
 }
 ```
 
 ---
 
-## 5. High-Performance `TypedArrays` for Numeric Data
+## 3. Classic Industry Problem Walkthroughs
 
-For raw numeric algorithms (e.g. image processing, WebGL graphics, audio streams), standard JS arrays introduce object pointer overhead. **`TypedArrays`** allocate flat, contiguous, unboxed C-style memory blocks.
+1. **Move Zeroes to End (`moveZeroes`)**:
+   Uses a read-write pointer pair to shift non-zero values forward in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ extra space, filling remaining trailing slots with zeros.
 
-```javascript
-// Allocate 1 MB flat contiguous binary buffer
-const buffer = new ArrayBuffer(1024 * 1024); // 1,048,576 bytes
+2. **Find Missing Number (`findMissingNumber`)**:
+   Calculates expected sum using the Gaussian formula $S = \frac{n(n+1)}{2}$ and subtracts the actual array sum. Runs in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ space.
 
-// Create typed view over buffer
-const int32View = new Int32Array(buffer); // Fixed 32-bit integers
-int32View[0] = 42;
+3. **Best Time to Buy and Sell Stock (`maxProfit`)**:
+   Tracks minimum buying price encountered so far while calculating maximum potential profit at each step in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ space.
 
-console.log("Bytes per element:", Int32Array.BYTES_PER_ELEMENT); // 4 bytes
-console.log("Capacity:", int32View.length); // 262,144 numbers
-```
+4. **Sliding Window Max Sum of K Consecutive Elements (`maxSumKConsecutive`)**:
+   Maintains a fixed window sum of size $k$. On each step, adds the incoming element `arr[i]` and subtracts the outgoing element `arr[i - k]`, achieving $\mathcal{O}(n)$ runtime.
+
+5. **Remove Duplicates from Sorted Array (`removeDuplicatesSorted`)**:
+   Maintains a `write` pointer that overwrites duplicate values in-place in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ space.
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Keep Arrays Homogeneous (Monomorphic)**: Store only a single type (e.g., only Small Integers) inside hot arrays. Avoid mixing integers, floats, strings, and objects to preserve JIT `PACKED_SMI` fast paths.
-2. **Never Create Sparse Array Holes**: Do not use `delete arr[i]` (use `arr.splice(i, 1)` or set to `null`). Avoid skipping indices (`arr[100] = 5` when `length` is `5`), which degrades the array into `HOLEY` or Dictionary mode.
-3. **Avoid `shift()` / `unshift()` in Hot Loops**: `shift()` and `unshift()` re-index the entire array ($\mathcal{O}(n)$). For FIFO Queue requirements, use a ring buffer or doubly linked list.
-4. **Use `TypedArrays` for Heavy Math**: Use `Int32Array` or `Float64Array` when operating on large numeric datasets to eliminate V8 garbage collector and object pointer overhead.
-
+1. **Memory Locality**: Index access is $\mathcal{O}(1)$ due to contiguous memory allocation.
+2. **Shift Overhead**: `shift()` and `unshift()` incur $\mathcal{O}(n)$ cost due to re-indexing elements; avoid in high-throughput loops.
+3. **V8 Performance**: Avoid sparse arrays (holes) and keep data types homogeneous to prevent element kind degradation.
+4. **Pattern Mastery**: Two-Pointer, Prefix Sum, Kadane's algorithm, and Sliding Window solve major array challenges in $\mathcal{O}(n)$ optimal time.

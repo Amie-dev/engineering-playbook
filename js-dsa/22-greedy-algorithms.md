@@ -1,139 +1,195 @@
-# Module 22: Greedy Algorithms — Local Optimality, Interval Scheduling, and Greedy Choice Invariants
+# Module 22: Greedy Algorithms, Activity Selection, & Optimal Choice Properties
 
-## Overview
+## Theoretical Overview & The Greedy Invariant
 
-A **Greedy Algorithm** constructs a global optimal solution step-by-step by making the **locally optimal choice** at each decision point without ever looking back or backtracking.
-
-Greedy algorithms are exceptionally fast—running in **$\mathcal{O}(N \log N)$ or $\mathcal{O}(N)$ time**—but apply strictly when a problem satisfies the **Greedy Choice Property** (a local optimal decision is mathematically guaranteed to lead to a global optimal solution).
-
----
-
-## 1. Paradigm Comparison: Greedy vs. Dynamic Programming vs. Backtracking
+A **Greedy Algorithm** builds a solution step-by-step by making the **locally optimal choice** at each stage, hoping to arrive at a globally optimal solution.
 
 ```mermaid
 flowchart TD
-    StrategyChoice[Select Problem Strategy] --> DecisionStyle{Can local optimal choice guarantee global solution?}
-
-    DecisionStyle -- Yes (Strict Guarantee) --> Greedy["Greedy Algorithm<br/>- No backtracking or subproblem table<br/>- Makes irrevocable choice immediately<br/>- O(N log N) Time (often requires sorting)"]
-
-    DecisionStyle -- No (Overlapping Choices) --> DP["Dynamic Programming<br/>- Evaluates all candidate choices via memo/table<br/>- Guarantees global optimum via subproblems<br/>- O(N * M) Time"]
-
-    DecisionStyle -- No (Exploratory Branches) --> Backtracking["Backtracking<br/>- Explores all paths and backtracks on failure<br/>- Solves constraint satisfaction<br/>- Exponential O(2ⁿ / N!) Time"]
+    State["Current Subproblem State"] --> LocalChoice["Make Locally Optimal Choice"]
+    LocalChoice --> Subproblem["Reduce to Smaller Subproblem"]
+    Subproblem --> GlobalCheck{Does Greedy Choice Property Hold?}
+    GlobalCheck -->|Yes| GlobalOptimum["Global Optimal Solution Guaranteed"]
+    GlobalCheck -->|No| SuboptimalFailure["Fails! Requires Dynamic Programming / Backtracking"]
 ```
 
-### Paradigm Feature Matrix
-
-| Characteristic | Greedy Algorithms | Dynamic Programming (DP) | Backtracking |
-| :--- | :--- | :--- | :--- |
-| **Decision Scope** | Local immediate choice | All overlapping subproblems | All valid candidate permutations |
-| **Backtracking?** | **No** (Irrevocable choices) | **No** (Table lookup) | **Yes** (Undos state) |
-| **Time Complexity** | **$\mathcal{O}(N \log N)$ or $\mathcal{O}(N)$** | $\mathcal{O}(N^2)$ or $\mathcal{O}(N \cdot W)$ | $\mathcal{O}(2^N)$ or $\mathcal{O}(N!)$ |
-| **Correctness Requirement**| Greedy Choice Proof | Optimal Substructure | Complete Tree Search |
+### Core Requirements for Greedy Correctness
+1. **Greedy Choice Property**: A globally optimal solution can be reached by making locally optimal (greedy) choices without ever backtracking or re-evaluating previous decisions.
+2. **Optimal Substructure**: An optimal solution to the overall problem contains optimal solutions to its subproblems.
 
 ---
 
-## 2. Interval Scheduling Strategy (Sorting by End Time)
+## 1. Greedy vs Dynamic Programming Comparison
 
-In **Interval Scheduling**, selecting intervals by **End Time Ascending** leaves maximum remaining time for subsequent non-overlapping tasks ("Greedy Choice Stays Ahead" proof):
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Input as Meetings: [[1, 3], [2, 4], [3, 6], [5, 7]]
-    participant Sorted as Pre-Sorted by End Time: [[1, 3], [2, 4], [3, 6], [5, 7]]
-    participant Greedy as Selection Engine
-
-    Greedy->>Sorted: Pick 1st interval [1, 3] (End time = 3)
-    Sorted-->>Greedy: Next interval [2, 4] start (2) < current end (3) -> REJECT!
-    Sorted-->>Greedy: Next interval [3, 6] start (3) >= current end (3) -> ACCEPT! (End time = 6)
-    Sorted-->>Greedy: Next interval [5, 7] start (5) < current end (6) -> REJECT!
-    
-    Greedy-->>Input: Total Accepted Non-Overlapping Meetings = 2
-```
+| Metric | Greedy Algorithms | Dynamic Programming (DP) |
+| :--- | :--- | :--- |
+| **Decision Choice** | Makes the best local choice at each step immediately. | Evaluates all possible subproblem choices and stores results. |
+| **Time Complexity** | Fast (**$\mathcal{O}(n)$ or $\mathcal{O}(n \log n)$**). | Slower (**$\mathcal{O}(n^2)$ or $\mathcal{O}(n \cdot W)$**). |
+| **Backtracking** | **Never backtracks** or changes past decisions. | Explores overlapping sub-cases. |
+| **Subproblem Dependability**| Subproblems do not need to be solved beforehand. | Subproblems must be solved bottom-up / memoized. |
 
 ---
 
-## 3. Production Code Implementations
+## 2. Core Code Implementations & Walkthroughs
+
+### 1. Activity / Interval Selection (`activitySelection`)
+Select the maximum number of non-overlapping activities on a single platform/resource.
+- **Greedy Rule**: Sort activities by **end time** ascending, then iteratively select the next activity whose start time is $\ge$ the last selected end time.
+- **Complexity**: Time $\mathcal{O}(n \log n)$, Space $\mathcal{O}(n)$.
 
 ```javascript
-// 1. Interval Scheduling / Activity Selection - O(N log N) Time, O(1) Space
-function maxNonOverlappingIntervals(intervals) {
-  if (intervals.length === 0) return 0;
+function activitySelection(activities) {
+  const sorted = [...activities].sort((a, b) => a.end - b.end);
+  const selected = [sorted[0]];
+  let lastEnd = sorted[0].end;
 
-  // GREEDY CHOICE KEY: Sort by END TIME ascending!
-  intervals.sort((a, b) => a[1] - b[1]);
-
-  let count = 1;
-  let lastEndTime = intervals[0][1];
-
-  for (let i = 1; i < intervals.length; i++) {
-    const [start, end] = intervals[i];
-    // If current interval starts at or after last selected end time, select it!
-    if (start >= lastEndTime) {
-      count++;
-      lastEndTime = end;
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].start >= lastEnd) {
+      selected.push(sorted[i]);
+      lastEnd = sorted[i].end;
     }
   }
-
-  return count;
+  return selected;
 }
+```
 
-// 2. Jump Game I (LeetCode #55) - O(N) Time, O(1) Space
-function canJump(nums) {
-  let maxReachableIndex = 0;
+### 2. Fractional Knapsack (`fractionalKnapsack`)
+Items can be broken into smaller fractional pieces.
+- **Greedy Rule**: Sort items by **Value-to-Weight Ratio** $\frac{\text{value}}{\text{weight}}$ descending. Take as much of the highest-ratio item as possible before moving to the next.
+- **Complexity**: Time $\mathcal{O}(n \log n)$, Space $\mathcal{O}(n)$.
 
-  for (let i = 0; i < nums.length; i++) {
-    // If current index is beyond maximum reachable index, failure!
-    if (i > maxReachableIndex) return false;
+```javascript
+function fractionalKnapsack(items, capacity) {
+  const sorted = [...items]
+    .map(item => ({ ...item, ratio: item.value / item.weight }))
+    .sort((a, b) => b.ratio - a.ratio);
 
-    // Greedy Choice: Extend maximum reachable boundary as far right as possible
-    maxReachableIndex = Math.max(maxReachableIndex, i + nums[i]);
+  let totalValue = 0, remaining = capacity;
+  const taken = [];
 
-    // Early Exit: Goal reached!
-    if (maxReachableIndex >= nums.length - 1) return true;
+  for (const item of sorted) {
+    if (remaining <= 0) break;
+    if (item.weight <= remaining) {
+      taken.push({ name: item.name, fraction: 1, value: item.value });
+      totalValue += item.value;
+      remaining -= item.weight;
+    } else {
+      const fraction = remaining / item.weight;
+      taken.push({ name: item.name, fraction: +fraction.toFixed(2), value: +(item.value * fraction).toFixed(2) });
+      totalValue += item.value * fraction;
+      remaining = 0;
+    }
   }
+  return { totalValue: +totalValue.toFixed(2), taken };
+}
+```
 
+### 3. Coin Change: Greedy vs Dynamic Programming
+- **Standard Currency (e.g., INR `[1, 2, 5, 10, 20, 50, 100, 500]`)**: Greedy works correctly because every denomination is a multiple or valid subset combination of smaller denominations.
+- **Arbitrary Currency (e.g., `[1, 3, 4]` for amount `6`)**:
+  - Greedy picks `4 + 1 + 1` (3 coins) $\implies$ **Suboptimal Failure**.
+  - Dynamic Programming picks `3 + 3` (2 coins) $\implies$ **Optimal Solution**.
+
+```javascript
+function greedyCoinChange(coins, amount) {
+  const sorted = [...coins].sort((a, b) => b - a);
+  const result = [];
+  let remaining = amount;
+  for (const coin of sorted) {
+    while (remaining >= coin) { result.push(coin); remaining -= coin; }
+  }
+  return remaining === 0 ? result : null;
+}
+```
+
+---
+
+## 3. Advanced Greedy Problem Patterns
+
+### 1. Jump Game (`canJump` & `minJumps`)
+Determine if you can reach the last index and compute minimum jumps required.
+- **Greedy Strategy**: Maintain a `farthest` reachable index boundary. If loop index $i > \text{farthest}$, return `false`.
+
+```javascript
+function canJump(nums) {
+  let farthest = 0;
+  for (let i = 0; i < nums.length; i++) {
+    if (i > farthest) return false;
+    farthest = Math.max(farthest, i + nums[i]);
+    if (farthest >= nums.length - 1) return true;
+  }
   return true;
 }
 
-// 3. Fractional Knapsack Problem - O(N log N) Time, O(1) Space
-function fractionalKnapsack(items, capacity) {
-  // items = [{ weight, value }]
-  // Sort items by Value-to-Weight Ratio descending!
-  items.sort((a, b) => b.value / b.weight - a.value / a.weight);
-
-  let totalValue = 0;
-  let remainingCapacity = capacity;
-
-  for (const item of items) {
-    if (remainingCapacity === 0) break;
-
-    if (item.weight <= remainingCapacity) {
-      // Take entire item
-      totalValue += item.value;
-      remainingCapacity -= item.weight;
-    } else {
-      // Take fraction of item
-      const fraction = remainingCapacity / item.weight;
-      totalValue += item.value * fraction;
-      remainingCapacity = 0; // Knapsack full!
+function minJumps(nums) {
+  if (nums.length <= 1) return 0;
+  let jumps = 0, currentEnd = 0, farthest = 0;
+  for (let i = 0; i < nums.length - 1; i++) {
+    farthest = Math.max(farthest, i + nums[i]);
+    if (i === currentEnd) {
+      jumps++;
+      currentEnd = farthest;
+      if (currentEnd >= nums.length - 1) break;
     }
   }
-
-  return totalValue;
+  return jumps;
 }
+```
 
-console.log("Max Non-Overlapping Meetings:", maxNonOverlappingIntervals([[1, 3], [2, 4], [3, 6], [5, 7]])); // 2
-console.log("Can Jump [2,3,1,1,4]         :", canJump([2, 3, 1, 1, 4])); // true
-console.log("Can Jump [3,2,1,0,4]         :", canJump([3, 2, 1, 0, 4])); // false
+### 2. Huffman Coding Compression (`huffmanEncode`)
+Assign variable-length prefix bitcodes to characters based on frequency (frequent characters receive shorter bit sequences).
+- **Greedy Rule**: Repeatedly extract the two lowest-frequency nodes from a Priority Queue, merge them into a new parent node with combined frequency, and re-insert into the queue.
+
+```javascript
+class HuffmanNode {
+  constructor(char, freq) {
+    this.char = char; this.freq = freq;
+    this.left = null; this.right = null;
+  }
+}
+```
+
+### 3. Merge Overlapping Intervals (`mergeIntervals`)
+Sort intervals by start time. Extend `last[1] = Math.max(last[1], sorted[i][1])` if `sorted[i][0] <= last[1]`.
+- **Complexity**: Time $\mathcal{O}(n \log n)$, Space $\mathcal{O}(n)$.
+
+```javascript
+function mergeIntervals(intervals) {
+  if (intervals.length <= 1) return intervals;
+  const sorted = [...intervals].sort((a, b) => a[0] - b[0]);
+  const merged = [sorted[0]];
+
+  for (let i = 1; i < sorted.length; i++) {
+    const last = merged[merged.length - 1];
+    if (sorted[i][0] <= last[1]) last[1] = Math.max(last[1], sorted[i][1]);
+    else merged.push(sorted[i]);
+  }
+  return merged;
+}
+```
+
+### 4. Gas Station Circular Circuit (`canCompleteCircuit`)
+Find the starting gas station index that allows traveling around a circular route.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function canCompleteCircuit(gas, cost) {
+  let totalSurplus = 0, currentSurplus = 0, start = 0;
+  for (let i = 0; i < gas.length; i++) {
+    const net = gas[i] - cost[i];
+    totalSurplus += net;
+    currentSurplus += net;
+    if (currentSurplus < 0) { start = i + 1; currentSurplus = 0; }
+  }
+  return totalSurplus >= 0 ? start : -1;
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Sort First to Enable Greedy Invariants**: Most greedy problems require pre-sorting inputs by specific properties (e.g. End Time for Interval Scheduling, Value/Weight ratio for Fractional Knapsack).
-2. **Beware of 0/1 Knapsack Trap**: Greedy choice by value ratio fails on 0/1 Knapsack (where items cannot be split). Use Dynamic Programming for 0/1 Knapsack.
-3. **Use Greedy for Single-Pass Tracking**: Problems like "Jump Game" or "Gas Station" can be tracked in $\mathcal{O}(N)$ linear time by maintaining running extreme boundaries (`maxReachableIndex`).
-4. **Greedy Algorithms Deliver Maximum Efficiency**: When mathematically proven valid, greedy algorithms outperform DP and Backtracking by eliminating table allocation and call stack overhead.
-
+1. **Greedy Choice Property**: Makes locally optimal choices without backtracking.
+2. **Activity Selection**: Always sort intervals by **end time** ascending.
+3. **Fractional vs 0/1 Knapsack**: Use Greedy ($\frac{\text{value}}{\text{weight}}$ ratio) for fractional knapsack; use Dynamic Programming for 0/1 knapsack.
+4. **Denomination Proof**: Verify if currency system breaks greedy optimal choices before choosing Greedy over DP.

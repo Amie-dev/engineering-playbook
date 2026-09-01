@@ -1,182 +1,209 @@
-# Module 13: Binary Search Trees (BST), Deletion Mechanics, and Self-Balancing Trees
+# Module 13: Binary Search Trees (BST), Deletion, and Self-Balancing Concepts
 
-## Overview
+## Theoretical Overview & Order Invariant
 
-A **Binary Search Tree (BST)** is a binary tree defined by a strict structural invariant for every node:
-1. All node values in its **Left Subtree** are strictly less than the node's value ($\text{Left} < \text{Node}$).
-2. All node values in its **Right Subtree** are strictly greater than the node's value ($\text{Right} > \text{Node}$).
-
-When a BST is **Balanced** (height $H \approx \log_2 N$), operations run in logarithmic **$\mathcal{O}(\log N)$ time**. However, un-balanced insertion sequences degrade the BST into a linear linked list ($\mathcal{O}(N)$ worst-case).
-
----
-
-## 1. Balanced vs. Degenerate Unbalanced BSTs
-
-```mermaid
-graph TD
-    subgraph Balanced BST: O(log N) Height
-        B10["10"] --> B5["5"]
-        B10 --> B15["15"]
-        B5 --> B2["2"]
-        B5 --> B8["8"]
-        B15 --> B12["12"]
-        B15 --> B20["20"]
-    end
-
-    subgraph Degenerate Line Tree: O(N) Worst Case
-        D2["2"] --> D5["5"]
-        D5 --> D8["8"]
-        D8 --> D10["10"]
-        D10 --> D12["12"]
-    end
-```
-
----
-
-## 2. Deletion Algorithm: 3 Node Deletion Cases
-
-Deleting a node from a BST must preserve the BST invariant. The operation handles **three distinct node cases**:
+A **Binary Search Tree (BST)** is a binary tree that satisfies the strict **Binary Search Property** for every node $N$:
+1. All node values in the **left subtree** of $N$ are strictly less than $N.\text{value}$.
+2. All node values in the **right subtree** of $N$ are strictly greater than $N.\text{value}$.
+3. Both left and right subtrees must also be valid Binary Search Trees.
 
 ```mermaid
 flowchart TD
-    DeleteCall["deleteNode(root, key)"] --> LocateNode[Locate Target Node via BST Search]
-    LocateNode --> CaseCheck{How many children does target node have?}
-
-    CaseCheck -- Case 1: Zero Children (Leaf Node) --> RemoveLeaf["Delete node directly!<br/>Return null to parent link"]
-
-    CaseCheck -- Case 2: One Child --> BypassChild["Replace target node with its single child!<br/>Return target.left || target.right"]
-
-    CaseCheck -- Case 3: Two Children --> InOrderSuccessor["1. Find In-Order Successor (Smallest node in Right Subtree)<br/>2. Copy Successor's value into Target node<br/>3. Recursively delete Successor node from Right Subtree!"]
+    Root["Root Node: 50"] --> L30["Node: 30 (< 50)"]
+    Root --> R70["Node: 70 (> 50)"]
+    
+    L30 --> L20["Node: 20 (< 30)"]
+    L30 --> R40["Node: 40 (> 30)"]
+    
+    R70 --> L60["Node: 60 (< 70)"]
+    R70 --> R80["Node: 80 (> 70)"]
 ```
 
+### In-Order Traversal Invariant
+An **In-order traversal** (Left $\to$ Root $\to$ Right) across a valid BST yields values in **strictly ascending sorted order**.
+
 ---
 
-## 3. Operations Complexity & Self-Balancing Trees Overview
+## 1. BST Complexity Matrix
 
-| Operations | Average-Case (Balanced BST) | Worst-Case (Degenerate BST) | Self-Balancing (AVL / Red-Black) |
+| Operation | Balanced BST Time | Skewed / Degenerate BST Time | Auxiliary Space |
 | :--- | :--- | :--- | :--- |
-| **Search / Lookup** | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ | **$\mathcal{O}(\log N)$ Guaranteed** |
-| **Insertion** | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ | **$\mathcal{O}(\log N)$ Guaranteed** |
-| **Deletion** | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ | **$\mathcal{O}(\log N)$ Guaranteed** |
-| **Auxiliary Space** | $\mathcal{O}(H)$ ($H = \log N$) | $\mathcal{O}(N)$ | **$\mathcal{O}(\log N)$ Guaranteed** |
-
-### Self-Balancing Trees: AVL vs. Red-Black
-- **AVL Trees**: Maintains strict height balance ($\text{height(left)} - \text{height(right)} \le 1$) via tree rotations. Optimized for lookup-heavy workloads.
-- **Red-Black Trees**: Uses color bits (Red/Black) to ensure no path is more than double the length of any other path. Used internally in C++ `std::map` and Java `TreeMap`.
+| **Search** | $\mathcal{O}(\log n)$ | $\mathcal{O}(n)$ | $\mathcal{O}(h)$ call stack |
+| **Insert** | $\mathcal{O}(\log n)$ | $\mathcal{O}(n)$ | $\mathcal{O}(h)$ call stack |
+| **Delete** | $\mathcal{O}(\log n)$ | $\mathcal{O}(n)$ | $\mathcal{O}(h)$ call stack |
+| **Find Min / Max**| $\mathcal{O}(\log n)$ | $\mathcal{O}(n)$ | $\mathcal{O}(1)$ iterative |
+| **In-order Range**| $\mathcal{O}(\log n + k)$ | $\mathcal{O}(n)$ | $\mathcal{O}(h)$ where $k$ is output count |
 
 ---
 
-## 4. Production Binary Search Tree Code Implementation
+## 2. Core Class Implementation & 3-Case Deletion
 
 ```javascript
-class BSTNode {
-  constructor(val, left = null, right = null) {
-    this.val = val;
-    this.left = left;
-    this.right = right;
+class TreeNode {
+  constructor(value) {
+    this.value = value;
+    this.left = null;
+    this.right = null;
   }
 }
 
-class BinarySearchTree {
-  constructor() {
-    this.root = null;
-  }
+class BST {
+  constructor() { this.root = null; }
 
-  // Iterative Insertion - O(log N) Avg, O(N) Worst
-  insert(val) {
-    const newNode = new BSTNode(val);
-    if (!this.root) {
-      this.root = newNode;
-      return this;
-    }
-
+  insert(value) {
+    const newNode = new TreeNode(value);
+    if (this.root === null) { this.root = newNode; return this; }
     let current = this.root;
     while (true) {
-      if (val === current.val) return this; // Ignore duplicates
-      if (val < current.val) {
-        if (!current.left) {
-          current.left = newNode;
-          return this;
-        }
+      if (value === current.value) return this;
+      if (value < current.value) {
+        if (current.left === null) { current.left = newNode; return this; }
         current = current.left;
       } else {
-        if (!current.right) {
-          current.right = newNode;
-          return this;
-        }
+        if (current.right === null) { current.right = newNode; return this; }
         current = current.right;
       }
     }
   }
 
-  // Node Deletion Method - O(log N) Avg
-  delete(val) {
-    this.root = this._deleteNode(this.root, val);
-  }
-
-  _deleteNode(node, key) {
-    if (!node) return null;
-
-    if (key < node.val) {
-      node.left = this._deleteNode(node.left, key);
-    } else if (key > node.val) {
-      node.right = this._deleteNode(node.right, key);
-    } else {
-      // Node to delete found!
-      // Case 1 & 2: 0 or 1 Child
-      if (!node.left) return node.right;
-      if (!node.right) return node.left;
-
-      // Case 3: 2 Children -> Find In-Order Successor (Min node in right subtree)
-      let successor = node.right;
-      while (successor.left !== null) {
-        successor = successor.left;
-      }
-
-      // Copy successor value to current node
-      node.val = successor.val;
-
-      // Delete the duplicate successor node from right subtree
-      node.right = this._deleteNode(node.right, successor.val);
+  search(value) {
+    let current = this.root;
+    while (current !== null) {
+      if (value === current.value) return current;
+      current = value < current.value ? current.left : current.right;
     }
-
-    return node;
-  }
-}
-
-// 5. Validating Binary Search Tree Algorithm - O(N) Time, O(H) Space
-function isValidBST(root, min = -Infinity, max = Infinity) {
-  if (!root) return true;
-
-  if (root.val <= min || root.val >= max) {
-    return false; // Violation of BST invariant!
+    return null;
   }
 
-  return (
-    isValidBST(root.left, min, root.val) &&
-    isValidBST(root.right, root.val, max)
-  );
+  findMin(node = this.root) {
+    let current = node;
+    while (current && current.left) current = current.left;
+    return current;
+  }
 }
+```
 
-// Verification
-const bst = new BinarySearchTree();
-bst.insert(10);
-bst.insert(5);
-bst.insert(15);
-bst.insert(2);
-bst.insert(8);
+### The Three Node Deletion Scenarios
 
-console.log("Is Valid BST?", isValidBST(bst.root)); // true
-bst.delete(5);
-console.log("Is Valid BST after deletion?", isValidBST(bst.root)); // true
+```mermaid
+flowchart TD
+    DeleteCall["deleteNode(node, value)"] --> CaseCheck{Children Count?}
+    CaseCheck -->|Case 1: 0 Children| Leaf["Node is Leaf -> Return null"]
+    CaseCheck -->|Case 2: 1 Child| OneChild["Return non-null child pointer"]
+    CaseCheck -->|Case 3: 2 Children| TwoChild["1. Find In-order Successor: min(node.right)<br/>2. Overwrite node.value = successor.value<br/>3. Delete successor from node.right"]
+```
+
+```javascript
+delete(value) { this.root = this._deleteNode(this.root, value); }
+
+_deleteNode(node, value) {
+  if (node === null) return null;
+  if (value < node.value) { node.left = this._deleteNode(node.left, value); }
+  else if (value > node.value) { node.right = this._deleteNode(node.right, value); }
+  else {
+    // Case 1 & Case 2: 0 or 1 child
+    if (!node.left && !node.right) return null;
+    if (node.left === null) return node.right;
+    if (node.right === null) return node.left;
+    
+    // Case 3: 2 children
+    const successor = this.findMin(node.right);
+    node.value = successor.value;
+    node.right = this._deleteNode(node.right, successor.value);
+  }
+  return node;
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Validation & Specialized Algorithms
 
-1. **Understand Degenerate Tree Risks**: Inserting pre-sorted items into a naive BST creates a linked list of height $N$. Use Self-Balancing Trees (AVL/Red-Black) or shuffle array data prior to insertion.
-2. **Master Case 3 Node Deletion**: Always replace nodes with 2 children using their **In-Order Successor** (smallest node in right subtree) or **In-Order Predecessor** (largest node in left subtree).
-3. **Use Range Bound Validation for `isValidBST()`**: Validating a BST requires checking that every node satisfies lower and upper bounds `(min < node.val < max)`, not just checking immediate parent-child relationships.
-4. **Leverage In-Order Traversal for Sorted Arrays**: In-order traversal of a valid BST yields array elements in strictly sorted order in $\mathcal{O}(N)$ time.
+### 1. Robust BST Validation (`isValidBST`)
+Validating only immediate children (`node.left < node` and `node.right > node`) is insufficient. The algorithm must enforce dynamic range bounds $[min, max]$ recursively down the tree.
 
+```javascript
+function isValidBST(node, min = -Infinity, max = Infinity) {
+  if (node === null) return true;
+  if (node.value <= min || node.value >= max) return false;
+  return isValidBST(node.left, min, node.value) && isValidBST(node.right, node.value, max);
+}
+```
+
+### 2. In-order Successor & Predecessor (`inorderSuccessor`)
+Find the smallest node value greater than `target`.
+
+```javascript
+function inorderSuccessor(root, target) {
+  let successor = null, current = root;
+  while (current !== null) {
+    if (target < current.value) { successor = current; current = current.left; }
+    else current = current.right;
+  }
+  return successor;
+}
+```
+
+### 3. K-th Smallest Element (`kthSmallest`)
+Perform an iterative in-order traversal stopping at step $k$ in **$\mathcal{O}(h + k)$** time.
+
+```javascript
+function kthSmallest(root, k) {
+  const stack = [];
+  let current = root, count = 0;
+  while (current !== null || stack.length > 0) {
+    while (current !== null) { stack.push(current); current = current.left; }
+    current = stack.pop();
+    count++;
+    if (count === k) return current.value;
+    current = current.right;
+  }
+  return -1;
+}
+```
+
+### 4. Lowest Common Ancestor in BST (`lowestCommonAncestor`)
+Exploits BST ordering: if both values $p, q < \text{current.value}$, jump left; if both $p, q > \text{current.value}$, jump right. The first splitting node is the LCA.
+
+```javascript
+function lowestCommonAncestor(root, p, q) {
+  let current = root;
+  while (current !== null) {
+    if (p < current.value && q < current.value) current = current.left;
+    else if (p > current.value && q > current.value) current = current.right;
+    else return current;
+  }
+  return null;
+}
+```
+
+### 5. Convert Sorted Array to Balanced BST (`sortedArrayToBST`)
+Recursively selects the median array element as root to build a height-balanced BST ($\mathcal{O}(n)$ time).
+
+```javascript
+function sortedArrayToBST(arr, left = 0, right = arr.length - 1) {
+  if (left > right) return null;
+  const mid = left + Math.floor((right - left) / 2);
+  const node = new TreeNode(arr[mid]);
+  node.left = sortedArrayToBST(arr, left, mid - 1);
+  node.right = sortedArrayToBST(arr, mid + 1, right);
+  return node;
+}
+```
+
+---
+
+## 4. Self-Balancing Trees Overview
+
+1. **AVL Trees**: Maintains strict height balance ($|height(left) - height(right)| \le 1$). Uses single and double tree rotations upon insertion/deletion.
+2. **Red-Black Trees**: Relaxed balance using node color rules (Red/Black). Powers standard library maps (e.g., C++ `std::map`, Java `TreeMap`).
+3. **B-Trees & B+ Trees**: High-branching factor trees designed for disk storage engines and database indexing (PostgreSQL, MongoDB).
+
+---
+
+## Key Takeaways
+
+1. **Invariant Property**: Left $< \text{Root} < \text{Right}$ across all subtrees.
+2. **Deletion Mechanics**: Two-child nodes require replacement with the in-order successor (`min` node of the right subtree).
+3. **Range Validation**: Always validate BST using $[min, max]$ bounding parameters.
+4. **Optimal Ancestor Lookups**: LCA executes in $\mathcal{O}(h)$ time by comparing target values directly against node values.

@@ -1,157 +1,192 @@
-# Module 12: Tree Structures, Hierarchical Terminology, and Traversal Strategies
+# Module 12: Binary Trees, Depth-First & Breadth-First Traversals
 
-## Overview
+## Theoretical Overview & Structural Hierarchy
 
-A **Tree** is an acyclic, non-linear hierarchical data structure composed of nodes connected by directed edges. A tree has a single designated **Root Node** at top and branches outward into subtrees.
-
-Trees power database indexing (B-Trees, LSM-Trees), filesystem directories, the HTML DOM, and compiler ASTs. Tree traversal strategies fall into two primary categories: **Depth-First Search (DFS)** and **Breadth-First Search (BFS)**.
-
----
-
-## 1. Tree Terminology & Structural Properties
-
-```mermaid
-graph TD
-    subgraph Tree Hierarchy Terminology
-        Root["Root Node (Depth 0, Height 2)<br/>Val: 10"] --> L1["Node 5 (Depth 1)<br/>Parent: 10"]
-        Root --> R1["Node 15 (Depth 1)<br/>Parent: 10"]
-
-        L1 --> L2_1["Leaf Node 2 (Depth 2)<br/>Height 0"]
-        L1 --> L2_2["Leaf Node 7 (Depth 2)<br/>Height 0"]
-
-        R1 --> R2_2["Leaf Node 20 (Depth 2)<br/>Height 0"]
-    end
-```
-
-### Core Tree Concepts Reference
-
-- **Root**: The topmost node in a tree with no parent pointers.
-- **Child / Parent**: A node directly connected below another node is its child; the upper node is its parent.
-- **Leaf Node**: A node with zero children (`left === null` and `right === null`).
-- **Depth**: The number of edges from the root to target node.
-- **Height**: The number of edges on the longest path from target node down to a leaf.
-- **Subtree**: A tree consisting of a node and all its descendants.
-
----
-
-## 2. Traversal Strategies Comparison
+A **Binary Tree** is a non-linear hierarchical data structure in which each node contains a value reference and at most two child pointers (`left` and `right`).
 
 ```mermaid
 flowchart TD
-    TraversalChoice[Select Traversal Strategy] --> StyleChoice{Traverse Deep Branches First or Level-by-Level?}
-
-    StyleChoice -- Deep Branches First --> DFS["Depth-First Search (DFS)<br/>- Uses Call Stack or explicit Stack<br/>- Auxiliary Space: O(Height)"]
-
-    DFS --> PreOrder["1. Pre-Order (Root -> Left -> Right)<br/>- Used for tree cloning & serialization"]
-    DFS --> InOrder["2. In-Order (Left -> Root -> Right)<br/>- Returns sorted order for Binary Search Trees"]
-    DFS --> PostOrder["3. Post-Order (Left -> Right -> Root)<br/>- Used for bottom-up deletion & expression trees"]
-
-    StyleChoice -- Level-by-Level --> BFS["Breadth-First Search (BFS / Level Order)<br/>- Uses FIFO Queue<br/>- Auxiliary Space: O(Max Width)<br/>- Used for shortest path in unweighted trees"]
+    Root["Root Node: 1"] --> L2["Node: 2"]
+    Root --> R3["Node: 3"]
+    
+    L2 --> L4["Node: 4 (Leaf)"]
+    L2 --> R5["Node: 5 (Leaf)"]
+    
+    R3 --> R6["Node: 6"]
+    R6 --> L8["Node: 8 (Leaf)"]
+    R6 --> R9["Node: 9 (Leaf)"]
 ```
 
-### Traversal Complexity Matrix
-
-| Traversal Strategy | Visiting Sequence | Primary Use Case | Time Complexity | Auxiliary Space (Balanced Tree) | Auxiliary Space (Degenerate Line Tree) |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **DFS Pre-Order** | Root $\to$ Left $\to$ Right | Cloning trees, Prefix expressions. | $\mathcal{O}(N)$ | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ |
-| **DFS In-Order** | Left $\to$ Root $\to$ Right | Sorted traversal of BSTs. | $\mathcal{O}(N)$ | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ |
-| **DFS Post-Order**| Left $\to$ Right $\to$ Root | Deleting nodes, Postfix evaluation. | $\mathcal{O}(N)$ | $\mathcal{O}(\log N)$ | $\mathcal{O}(N)$ |
-| **BFS Level-Order**| Level-by-Level Top-to-Bottom | Shortest path, Nearest neighbor. | $\mathcal{O}(N)$ | $\mathcal{O}(W)$ ($W = \text{max width}$) | $\mathcal{O}(1)$ |
+### Key Terminology
+- **Root**: Topmost node without a parent (`value = 1`).
+- **Leaf**: A node with zero children (`left === null` and `right === null`).
+- **Height**: The number of edges along the longest path from a node to a leaf (Height of root = 3).
+- **Depth**: The number of edges from the root to a target node (Depth of node 8 = 3).
+- **Balanced Tree**: A binary tree where the heights of the left and right subtrees of every node differ by at most 1.
 
 ---
 
-## 3. Production Tree Traversal Implementations
+## 1. Traversal Classification Matrix
+
+All four traversals visit every node in **$\mathcal{O}(n)$ time** and consume **$\mathcal{O}(h)$ auxiliary space** (where $h$ is tree height).
+
+| Traversal Strategy | Order Sequence | Primary Use Case | Iterative Stack / Queue |
+| :--- | :--- | :--- | :--- |
+| **In-order DFS** | Left $\to$ Root $\to$ Right | Yields elements in sorted order for BSTs. | Explicit LIFO Call Stack. |
+| **Pre-order DFS** | Root $\to$ Left $\to$ Right | Copying, cloning, and serializing trees. | Explicit LIFO Call Stack. |
+| **Post-order DFS** | Left $\to$ Right $\to$ Root | Bottom-up evaluation, deleting tree nodes. | Double Stack / Last-visited pointer. |
+| **Level-order BFS** | Level-by-level (Top to Bottom)| Shortest path, level grouping, printing trees. | FIFO Queue (`shift`/`push`). |
+
+---
+
+## 2. Traversal Implementations (Recursive & Iterative)
 
 ```javascript
 class TreeNode {
-  constructor(val, left = null, right = null) {
-    this.val = val;
-    this.left = left;
-    this.right = right;
+  constructor(value) {
+    this.value = value;
+    this.left = null;
+    this.right = null;
   }
 }
+```
 
-// 1. Recursive DFS In-Order Traversal (Left -> Root -> Right)
-function dfsInOrder(root, result = []) {
-  if (!root) return result;
-
-  if (root.left) dfsInOrder(root.left, result);
-  result.push(root.val);
-  if (root.right) dfsInOrder(root.right, result);
-
+### 1. In-order Traversal (L $\to$ Root $\to$ R)
+```javascript
+// Recursive: O(n) Time, O(h) Space
+function inorderRecursive(node, result = []) {
+  if (node === null) return result;
+  inorderRecursive(node.left, result);
+  result.push(node.value);
+  inorderRecursive(node.right, result);
   return result;
 }
 
-// 2. Iterative DFS In-Order Traversal (Explicit Stack - No Call Stack Overflow)
-function dfsInOrderIterative(root) {
-  const result = [];
-  const stack = [];
+// Iterative using Stack: O(n) Time, O(h) Space
+function inorderIterative(root) {
+  const result = [], stack = [];
   let current = root;
-
   while (current !== null || stack.length > 0) {
-    // Reach leftmost node of current node
-    while (current !== null) {
-      stack.push(current);
-      current = current.left;
-    }
-
-    // Pop and process node
+    while (current !== null) { stack.push(current); current = current.left; }
     current = stack.pop();
-    result.push(current.val);
-
-    // Shift to right child
+    result.push(current.value);
     current = current.right;
   }
+  return result;
+}
+```
 
+### 2. Pre-order Traversal (Root $\to$ L $\to$ R)
+```javascript
+// Recursive
+function preorderRecursive(node, result = []) {
+  if (node === null) return result;
+  result.push(node.value);
+  preorderRecursive(node.left, result);
+  preorderRecursive(node.right, result);
   return result;
 }
 
-// 3. BFS Level-Order Traversal using Queue - O(N) Time, O(W) Space
-function bfsLevelOrder(root) {
-  if (!root) return [];
+// Iterative using Stack
+function preorderIterative(root) {
+  if (root === null) return [];
+  const result = [], stack = [root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    result.push(node.value);
+    if (node.right) stack.push(node.right); // Right pushed first so Left is popped first
+    if (node.left) stack.push(node.left);
+  }
+  return result;
+}
+```
 
-  const result = [];
-  const queue = [root];
+### 3. Post-order Traversal (L $\to$ R $\to$ Root)
+```javascript
+function postorderRecursive(node, result = []) {
+  if (node === null) return result;
+  postorderRecursive(node.left, result);
+  postorderRecursive(node.right, result);
+  result.push(node.value);
+  return result;
+}
+```
 
+### 4. Level-order Traversal / BFS (`levelOrder`)
+```javascript
+function levelOrder(root) {
+  if (root === null) return [];
+  const result = [], queue = [root];
   while (queue.length > 0) {
     const levelSize = queue.length;
     const currentLevel = [];
-
     for (let i = 0; i < levelSize; i++) {
-      const node = queue.shift(); // Dequeue
-      currentLevel.push(node.val);
-
+      const node = queue.shift();
+      currentLevel.push(node.value);
       if (node.left) queue.push(node.left);
       if (node.right) queue.push(node.right);
     }
-
-    result.push(currentLevel); // Groups nodes by levels
+    result.push(currentLevel);
   }
-
   return result;
 }
-
-// Construction of Sample Binary Tree:
-//        10
-//       /  \
-//      5   15
-//     / \
-//    2   7
-const root = new TreeNode(10);
-root.left = new TreeNode(5, new TreeNode(2), new TreeNode(7));
-root.right = new TreeNode(15);
-
-console.log("DFS In-Order (Recursive):", dfsInOrder(root));          // [2, 5, 7, 10, 15]
-console.log("DFS In-Order (Iterative):", dfsInOrderIterative(root)); // [2, 5, 7, 10, 15]
-console.log("BFS Level Order         :", bfsLevelOrder(root));       // [[10], [5, 15], [2, 7]]
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Structural Property Calculations
 
-1. **Use DFS In-Order to Validate or Read Sorted Binary Search Trees**: Traversing a BST with DFS In-Order visits nodes in strictly ascending numerical order.
-2. **Use BFS for Level-by-Level Processing & Shortest Path**: Use BFS when you need to calculate tree depth, find nearest leaf nodes, or group elements level by level.
-3. **Use Iterative DFS for Deep Trees**: If a tree height exceeds 10,000 nodes, recursive DFS will crash with `Maximum call stack size exceeded`. Use an explicit array stack for safety.
-4. **Distinguish Time vs. Space Invariant**: Both DFS and BFS visit all $N$ nodes in $\mathcal{O}(N)$ time. However, DFS uses $\mathcal{O}(H)$ memory ($H = \text{height}$), whereas BFS uses $\mathcal{O}(W)$ memory ($W = \text{maximum level width}$).
+### 1. Height, Node Count, & Leaf Count
+```javascript
+function treeHeight(node) {
+  if (node === null) return -1;
+  return Math.max(treeHeight(node.left), treeHeight(node.right)) + 1;
+}
 
+function countNodes(node) {
+  if (node === null) return 0;
+  return 1 + countNodes(node.left) + countNodes(node.right);
+}
+
+function countLeaves(node) {
+  if (node === null) return 0;
+  if (!node.left && !node.right) return 1;
+  return countLeaves(node.left) + countLeaves(node.right);
+}
+```
+
+### 2. Height-Balanced Check in $\mathcal{O}(n)$ Time
+Computes subtree heights while simultaneously detecting imbalances. Returns `-1` immediately if any subtree is unbalanced, avoiding redundant $\mathcal{O}(n^2)$ height recalculations.
+
+```javascript
+function isBalanced(node) { return checkBalance(node) !== -1; }
+
+function checkBalance(node) {
+  if (node === null) return 0;
+  const lh = checkBalance(node.left);
+  if (lh === -1) return -1;
+  const rh = checkBalance(node.right);
+  if (rh === -1) return -1;
+  if (Math.abs(lh - rh) > 1) return -1;
+  return Math.max(lh, rh) + 1;
+}
+```
+
+---
+
+## 4. Classic Binary Tree Algorithms
+
+1. **Invert Binary Tree (`invertTree`)**: Swaps `node.left` and `node.right` pointers recursively across all nodes in $\mathcal{O}(n)$ time.
+2. **Structural Identity (`areIdentical`)**: Validates that two binary trees share identical node values and structure.
+3. **Root-to-Leaf Path Sum (`hasPathSum`)**: Determines if a path exists from root to any leaf node whose node values sum to `targetSum`.
+4. **Tree Diameter (`diameterOfBinaryTree`)**: Computes the length of the longest path between any two nodes in a tree in $\mathcal{O}(n)$ time.
+5. **Deserialization from Level-Order Array (`buildTreeFromArray`)**: Reconstructs a binary tree from a level-order array representation containing `null` markers using a FIFO queue.
+
+---
+
+## Key Takeaways
+
+1. **Recursive Subproblems**: Tree problems decompose naturally into: solve for `left` subtree, solve for `right` subtree, combine results.
+2. **In-Order Traversal**: Produces sorted key order on Binary Search Trees.
+3. **Height-Balanced Optimizations**: Return `-1` early during DFS post-order traversal to check height balance in single-pass $\mathcal{O}(n)$ runtime.
+4. **Queue vs Stack**: Use queues for Breadth-First Search (level-by-level) and stacks for Depth-First Search.

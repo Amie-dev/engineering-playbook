@@ -1,102 +1,162 @@
-# Module 03: Strings, V8 String Memory Representation, and Pattern Matching (KMP Algorithm)
+# Module 03: Strings, Internal Storage, and Pattern Matching Algorithms
 
-## Overview
+## Theoretical Overview & JavaScript UTF-16 Encoding
 
-In JavaScript, strings are **primitive, immutable sequences of UTF-16 code units**.
-
-Because strings are immutable, mutating or concatenating strings creates new string memory allocations. To optimize performance, the V8 engine uses specialized internal string structures—such as **ConsStrings (Ropes)** and **SlicedStrings**—to avoid copying underlying byte arrays during concatenation.
-
----
-
-## 1. V8 Internal String Memory Representations
-
-When concatenating large strings (`str1 + str2`), V8 avoids immediate memory allocation and copying by instantiating internal string representations:
+In JavaScript, **Strings are Primitive Immutable Values**. Once a string is created in memory, its characters cannot be modified in-place. Any string operation (concatenation, slicing, case conversion) allocates a **brand new string** in memory.
 
 ```mermaid
-graph TD
-    subgraph V8 Internal String Engine
-        ConsString["ConsString (Rope Tree)<br/>- Created during binary '+' concatenation<br/>- Defers byte copying until evaluation<br/>- O(1) Concatenation Time"]
-        SeqString["SeqString (Flat Sequential)<br/>- Contiguous byte memory block<br/>- One byte (OneByteString) or 2 bytes (TwoByteString)"]
-        SlicedString["SlicedString<br/>- Points to slice of existing parent string<br/>- Stores parent pointer + offset + length"]
-
-        ConsString -->|Left Child| SeqString1["Left: 'Hello '"]
-        ConsString -->|Right Child| SeqString2["Right: 'World'"]
+flowchart LR
+    subgraph V8 String Allocator
+        Str1["Original String: 'Namaste' (0x5000)"]
+        Str2["New Allocation: 'namaste' (0x5020)"]
     end
+    
+    Op["'n' + greeting.slice(1)"] --> Str2
 ```
+
+### Memory & Storage Mechanics
+- **UTF-16 Encoding**: JS strings use 16-bit code units. Basic Unicode characters take 2 bytes (1 Code Unit), while surrogate pairs (such as emojis like 🚀) occupy 4 bytes (2 Code Units).
+- **Concatenation Trap**: Appending strings inside a loop using `str += char` creates intermediate string objects at each step:
+
+$$\text{Total Copies} = 1 + 2 + 3 + \dots + n = \frac{n(n+1)}{2} = \mathcal{O}(n^2)$$
+
+> [!TIP]
+> **Performance Optimization**: Always collect characters in an array and invoke `.join("")`. Array pushing is $\mathcal{O}(1)$ amortized, and `.join("")` performs a single, exact memory buffer allocation of length $n$, executing in **$\mathcal{O}(n)$** overall time.
 
 ---
 
-## 2. UTF-16 Code Units vs. Unicode Code Points
+## 1. String Operations Complexity Matrix
 
-JavaScript strings use **UTF-16 encoding**, where each code unit is 16 bits (2 bytes).
+| Operation | JavaScript Syntax | Time Complexity | Space Complexity | Why |
+| :--- | :--- | :--- | :--- | :--- |
+| **Character Access**| `str[i]` | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Direct character indexing. |
+| **Concatenation** | `a + b` | $\mathcal{O}(n + m)$ | $\mathcal{O}(n + m)$ | Allocates new string of combined length. |
+| **Loop Concat** | `str += char` in loop | $\mathcal{O}(n^2)$ | $\mathcal{O}(n^2)$ | Re-allocates growing buffers on each step. |
+| **Array Join** | `parts.join("")` | $\mathcal{O}(n)$ | $\mathcal{O}(n)$ | Pre-computes exact target length. |
+| **Sub-string Search**| `str.indexOf(sub)` | $\mathcal{O}(n \cdot m)$ | $\mathcal{O}(1)$ | Naive search comparisons (V8 uses Boyer-Moore for long inputs). |
+| **Split to Array** | `str.split("")` | $\mathcal{O}(n)$ | $\mathcal{O}(n)$ | Scans string and populates array. |
 
-- **BMP (Basic Multilingual Plane)**: Standard ASCII and common characters take 1 code unit (`length === 1`).
-- **Supplementary Planes (Emojis & Symbols)**: Encoded as **Surrogate Pairs** using 2 code units (`length === 2`).
+---
+
+## 2. Core Algorithmic Patterns & Code Walkthroughs
+
+### 1. Palindrome Verification via Two-Pointer (`isPalindrome`)
+Verify if a string reads the same forwards and backwards after stripping non-alphanumeric characters.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$ for cleaned string.
 
 ```javascript
-const emoji = "😀"; 
+function isPalindrome(str) {
+  const cleaned = str.toLowerCase().replace(/[^a-z0-9]/g, "");
+  let left = 0, right = cleaned.length - 1;
+  while (left < right) {
+    if (cleaned[left] !== cleaned[right]) return false;
+    left++; right--;
+  }
+  return true;
+}
+```
 
-console.log(emoji.length); // 2 ! (2 UTF-16 Code Units)
-console.log(emoji.charCodeAt(0)); // 55357 (High Surrogate)
-console.log(emoji.charCodeAt(1)); // 56832 (Low Surrogate)
+### 2. Anagram Validation via Frequency Map (`areAnagrams`)
+Determine if two strings contain identical character counts.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(k)$ where $k \le 256$ character set size.
 
-// Correct Unicode Code Point Handling (ES6):
-console.log(emoji.codePointAt(0)); // 128512 (True Unicode Scalar Value)
-console.log([...emoji].length);    // 1 (Spread operator splits by Code Points!)
+```javascript
+function areAnagrams(str1, str2) {
+  if (str1.length !== str2.length) return false;
+  const freq = new Map();
+  for (const c of str1) freq.set(c, (freq.get(c) || 0) + 1);
+  for (const c of str2) {
+    if (!freq.has(c) || freq.get(c) === 0) return false;
+    freq.set(c, freq.get(c) - 1);
+  }
+  return true;
+}
+```
+
+### 3. Longest Substring Without Repeating Characters (`longestUniqueSubstring`)
+Find the length of the longest substring with unique characters using dynamic Sliding Window.
+- **Strategy**: Maintain a dynamic window bounded by `[start, end]` and a Hash Map storing last-seen character indices. When a duplicate is encountered inside the active window, jump `start` forward to `lastSeenIndex + 1`.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(\min(n, m))$.
+
+```javascript
+function longestUniqueSubstring(str) {
+  const charIndex = new Map();
+  let maxLen = 0, start = 0;
+  for (let end = 0; end < str.length; end++) {
+    const char = str[end];
+    if (charIndex.has(char) && charIndex.get(char) >= start) {
+      start = charIndex.get(char) + 1;
+    }
+    charIndex.set(char, end);
+    maxLen = Math.max(maxLen, end - start + 1);
+  }
+  return maxLen;
+}
+```
+
+### 4. Run-Length Encoding String Compression (`compressString`)
+Compress adjacent duplicate characters into letter-count pairs (e.g., `"aaabbc"` $\to$ `"a3b2c1"`). If compressed version is not shorter, return the original string.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
+
+```javascript
+function compressString(str) {
+  if (str.length <= 1) return str;
+  const parts = [];
+  let count = 1;
+  for (let i = 1; i <= str.length; i++) {
+    if (i < str.length && str[i] === str[i - 1]) {
+      count++;
+    } else {
+      parts.push(str[i - 1] + count);
+      count = 1;
+    }
+  }
+  const compressed = parts.join("");
+  return compressed.length < str.length ? compressed : str;
+}
+```
+
+### 5. String Rotation Verification (`isRotation`)
+Determine if `s2` is a rotation of `s1` in $\mathcal{O}(n)$ time.
+- **Trick**: If `s2` is a rotation of `s1`, it will always appear as a substring inside `s1 + s1`.
+
+```javascript
+function isRotation(s1, s2) {
+  if (s1.length !== s2.length) return false;
+  return (s1 + s1).includes(s2);
+}
 ```
 
 ---
 
-## 3. Pattern Matching Algorithms: Naive vs. KMP (Knuth-Morris-Pratt)
+## 3. Knuth-Morris-Pratt (KMP) Pattern Matching Algorithm
 
-### Algorithm Complexity Comparison
-
-| Algorithm | Best Case Time | Worst Case Time | Auxiliary Space | Key Mechanics |
-| :--- | :--- | :--- | :--- | :--- |
-| **Naive Search** | $\mathcal{O}(n)$ | $\mathcal{O}(n \times m)$ | $\mathcal{O}(1)$ | Checks every position; backtracks main string pointer. |
-| **KMP Algorithm** | $\mathcal{O}(n + m)$ | $\mathcal{O}(n + m)$ | $\mathcal{O}(m)$ | Uses Longest Prefix Suffix (LPS) array; **never backtracks** text pointer! |
-| **Rabin-Karp** | $\mathcal{O}(n + m)$ | $\mathcal{O}(n \times m)$ | $\mathcal{O}(1)$ | Uses rolling hash function to match pattern hash. |
-
----
-
-## 4. KMP Algorithm & Longest Prefix Suffix (LPS) Array
-
-The **KMP Algorithm** speeds up pattern matching from $\mathcal{O}(n \times m)$ to $\mathcal{O}(n + m)$ by precomputing a **Longest Proper Prefix which is also a Suffix (LPS)** array for the search pattern.
+The **KMP Algorithm** searches for target pattern $P$ of length $m$ inside text $T$ of length $n$ in **$\mathcal{O}(n + m)$** time, improving upon naive $\mathcal{O}(n \cdot m)$ matching by eliminating backtracking over text pointer $i$.
 
 ```mermaid
 flowchart TD
-    Pattern["Pattern: 'ABABC'"] --> LPSGen[Compute LPS Array]
-    LPSGen --> LPSResult["LPS Table: [0, 0, 1, 2, 0]"]
-    
-    subgraph Text Matching Phase
-        TextPointer["Text Pointer (i) Moves Forward ONLY"]
-        PatternPointer["Pattern Pointer (j) Fallback via LPS Table"]
-
-        TextPointer --> MatchCheck{Text[i] == Pattern[j]?}
-        MatchCheck -- Match --> Advance["i++, j++"]
-        MatchCheck -- Mismatch & j > 0 --> Fallback["j = LPS[j - 1]<br/>(Skip redundant comparisons!)"]
-        MatchCheck -- Mismatch & j == 0 --> NextChar["i++"]
-    end
+    BuildLPS["Build LPS Table (Longest Prefix Suffix)"] --> ScanText["Scan Text with Pattern"]
+    ScanText --> MatchCheck{Char Match?}
+    MatchCheck -->|Yes| AdvanceBoth["Increment Text (i) & Pattern (j)"]
+    MatchCheck -->|No & j > 0| SkipRedundant["Reset j = LPS[j - 1] (No text backtrack!)"]
+    MatchCheck -->|No & j == 0| AdvanceText["Increment Text (i)"]
 ```
 
-### Complete KMP Implementation Code
+### 1. Longest Prefix Suffix (LPS) Array Construction
+`LPS[i]` stores the length of the longest proper prefix of `pattern[0...i]` that is also a suffix of `pattern[0...i]`.
 
 ```javascript
-// Step 1: Precompute LPS (Longest Prefix Suffix) Array
-function buildLPSArray(pattern) {
-  const m = pattern.length;
-  const lps = new Array(m).fill(0);
-  let len = 0; // Length of previous longest prefix suffix
-  let i = 1;
-
-  while (i < m) {
-    if (pattern[i] === pattern[len]) {
-      len++;
-      lps[i] = len;
+function buildPrefixTable(pattern) {
+  const lps = new Array(pattern.length).fill(0);
+  let length = 0, i = 1;
+  while (i < pattern.length) {
+    if (pattern[i] === pattern[length]) {
+      length++;
+      lps[i] = length;
       i++;
     } else {
-      if (len !== 0) {
-        len = lps[len - 1]; // Fallback without advancing i
+      if (length !== 0) {
+        length = lps[length - 1];
       } else {
         lps[i] = 0;
         i++;
@@ -105,74 +165,47 @@ function buildLPSArray(pattern) {
   }
   return lps;
 }
+```
 
-// Step 2: KMP Substring Search Algorithm - O(N + M) Time
+### 2. KMP Search Execution
+```javascript
 function kmpSearch(text, pattern) {
-  if (pattern.length === 0) return 0;
-
-  const n = text.length;
-  const m = pattern.length;
-  const lps = buildLPSArray(pattern);
-
-  let i = 0; // Index for text
-  let j = 0; // Index for pattern
+  if (pattern.length === 0) return [];
+  const lps = buildPrefixTable(pattern);
   const matches = [];
-
-  while (i < n) {
-    if (pattern[j] === text[i]) {
-      i++;
-      j++;
-    }
-
-    if (j === m) {
-      matches.push(i - j); // Match found at index (i - j)
-      j = lps[j - 1];      // Prepare for next potential match
-    } else if (i < n && pattern[j] !== text[i]) {
-      if (j !== 0) {
-        j = lps[j - 1];    // Smart skip using LPS!
-      } else {
-        i++;
-      }
+  let i = 0, j = 0;
+  while (i < text.length) {
+    if (text[i] === pattern[j]) { i++; j++; }
+    if (j === pattern.length) {
+      matches.push(i - j);
+      j = lps[j - 1];
+    } else if (i < text.length && text[i] !== pattern[j]) {
+      if (j !== 0) j = lps[j - 1];
+      else i++;
     }
   }
-
   return matches;
 }
-
-console.log("KMP Match Index:", kmpSearch("ABABDABACDABABCABAB", "ABABC")); // Output: [10]
 ```
 
 ---
 
-## 5. Frequency Counter & Two-Pointer String Patterns
+## 4. Advanced Practical Problems
 
-```javascript
-// Valid Anagram Check via Frequency Map Array (O(n) Time, O(1) Space)
-function isAnagram(s, t) {
-  if (s.length !== t.length) return false;
+1. **One Edit Distance (`oneEditAway`)**:
+   Determines if two strings are within 1 insertion, deletion, or substitution operation in $\mathcal{O}(n)$ time and $\mathcal{O}(1)$ space.
 
-  // Use fixed 26-element array for lowercase ASCII chars
-  const charCounts = new Int32Array(26);
+2. **Longest Palindromic Substring (`longestPalindromicSubstring`)**:
+   Expands outward around every character (odd center) and character gap (even center) to discover maximum length palindrome in $\mathcal{O}(n^2)$ time and $\mathcal{O}(1)$ space.
 
-  for (let i = 0; i < s.length; i++) {
-    charCounts[s.charCodeAt(i) - 97]++;
-    charCounts[t.charCodeAt(i) - 97]--;
-  }
-
-  for (let i = 0; i < 26; i++) {
-    if (charCounts[i] !== 0) return false;
-  }
-
-  return true;
-}
-```
+3. **Group Anagrams (`groupAnagrams`)**:
+   Groups words into bucket arrays using sorted character strings as Hash Map keys in $\mathcal{O}(n \cdot k \log k)$ overall runtime.
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Avoid Repeated String Concatenation in Loops**: Using `str += char` inside a loop creates $\mathcal{O}(n^2)$ total allocation overhead. Collect strings inside an array and call `.join('')` or use a StringBuilder pattern.
-2. **Be Careful with Unicode Emojis**: Methods like `.length`, `.substring()`, and `.charAt()` work on UTF-16 Code Units, splitting surrogate pairs. Use `[...str]` or `String.prototype.codePointAt()` for true Unicode characters.
-3. **Use KMP for Substring Searches on Large Texts**: When searching for patterns repeatedly in large text files, KMP guarantees linear $\mathcal{O}(n + m)$ execution without backtracking.
-4. **Use Fixed ASCII Frequency Array Maps**: When solving character frequency problems restricted to standard English alphabets, replace `Map` objects with fixed-size `Int32Array(26)` for $10\times$ faster runtime performance.
-
+1. **Immutability Awareness**: Avoid repeated `+=` inside loops; collect components in an array and call `.join("")`.
+2. **KMP Pattern Search**: Eliminates redundant comparisons by using the LPS array to achieve $\mathcal{O}(n + m)$ linear time.
+3. **Sliding Window Optimization**: Reduces substring checks from $\mathcal{O}(n^2)$ to $\mathcal{O}(n)$ for unique substring queries.
+4. **Rotation Double Trick**: Validates string rotations instantaneously via `(s1 + s1).includes(s2)`.

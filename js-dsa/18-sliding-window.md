@@ -1,155 +1,202 @@
-# Module 18: Sliding Window Technique — Fixed vs. Variable Window Patterns
+# Module 18: Sliding Window Technique & Monotonic Deque Optimizations
 
-## Overview
+## Theoretical Overview & Window Mechanics
 
-The **Sliding Window Pattern** is an algorithmic technique that converts nested $\mathcal{O}(N^2)$ or $\mathcal{O}(N \cdot K)$ subarray/substring searches into single-pass **$\mathcal{O}(N)$ linear time solutions**.
-
-By maintaining two sliding pointers (`left` and `right`) and updating an incremental window state (sum, character frequency map, or set) as elements enter and leave the window boundaries, redundant re-computations are completely eliminated.
-
----
-
-## 1. Fixed vs. Variable Window Mechanics
+The **Sliding Window Technique** optimizes array and string problems involving contiguous subarrays or substrings, reducing time complexity from brute-force **$\mathcal{O}(n \cdot k)$** or **$\mathcal{O}(n^2)$** down to optimal **$\mathcal{O}(n)$** linear runtime.
 
 ```mermaid
-flowchart TD
-    WindowPattern[Select Sliding Window Variant] --> VariantChoice{Is window size fixed (K) or dynamic based on condition?}
-
-    VariantChoice -- Fixed Size K --> FixedWindow["1. Fixed-Size Window<br/>- Window width stays exactly K<br/>- Slide step: Add arr[right], Subtract arr[right - K]<br/>- O(N) Time, O(1) Space"]
-
-    VariantChoice -- Dynamic Condition --> VariableWindow["2. Variable-Size Window<br/>- Expand right boundary right++ to satisfy condition<br/>- Shrink left boundary left++ when condition is violated<br/>- O(N) Amortized Time"]
+flowchart LR
+    subgraph Fixed Sliding Window (k = 3)
+        Window["[arr[left] ... arr[right]]"] --> Slide["Slide Right: add arr[right+1], remove arr[left]"]
+    end
 ```
 
-### Dynamic Window State Machine
-
-```mermaid
-stateDiagram-v2
-    [*] --> ExpandRight: Initialize left = 0, right = 0
-    ExpandRight --> CheckCondition: Add arr[right] to Window State
-    
-    state CheckCondition <<choice>>
-    CheckCondition --> ShrinkLeft: Window Condition Violated (e.g. Duplicate Char)
-    CheckCondition --> RecordMax: Window Condition Satisfied
-
-    ShrinkLeft --> RemoveLeftState: Remove arr[left] from Window State & left++
-    RemoveLeftState --> CheckCondition
-
-    RecordMax --> AdvanceRight: Record Max/Min Window Length (right - left + 1)
-    AdvanceRight --> ExpandRight: right++
-```
+### Real-World Engineering Analogy: Hotstar IPL Viewer Telemetry
+During an IPL cricket stream with 25,000,000 concurrent viewers:
+- **Brute-force approach**: For each second, sum viewer metrics over the past 300 seconds ($300 \times 17,280$ operations), overloading analytics servers.
+- **Sliding Window approach**: Update the running sum by adding the new second's metric and subtracting the metric from 300 seconds ago, performing **1 addition and 1 subtraction per second** ($\mathcal{O}(1)$ time per update).
 
 ---
 
-## 2. Sliding Window Complexity Comparison
+## 1. Sliding Window Classification Matrix
 
-| Algorithm Pattern | Problem Type | Naive Complexity | Sliding Window Time | Auxiliary Space |
-| :--- | :--- | :--- | :--- | :--- |
-| **Fixed Window** | Max Sum Subarray of size $K$ | $\mathcal{O}(N \cdot K)$ | **$\mathcal{O}(N)$** | $\mathcal{O}(1)$ |
-| **Variable Window**| Longest Substring Without Repeats | $\mathcal{O}(N^3)$ | **$\mathcal{O}(N)$** | $\mathcal{O}(\min(N, \Sigma))$ |
-| **Minimum Window**| Minimum Window Substring | $\mathcal{O}(N^3)$ | **$\mathcal{O}(N)$** | $\mathcal{O}(\Sigma)$ ($\Sigma = \text{Alphabet}$) |
+| Window Type | Characteristics | Key Condition | Primary Algorithms / Problems |
+| :--- | :--- | :--- | :--- |
+| **Fixed-Size Window** | Window width $k$ remains constant throughout traversal. | Slide window right by +1: `windowSum += arr[i] - arr[i - k]`. | Max sum subarray of size $k$, Average of subarrays. |
+| **Fixed Monotonic Deque** | Window width $k$ remains constant; maintains index deque. | Deque stores indices in decreasing element value order. | **Sliding Window Maximum** (`maxOfSubarrays`). |
+| **Dynamic / Variable Window**| Window width expands or shrinks dynamically based on criteria. | Expand `right` to satisfy condition; shrink `left` to optimize bound. | Smallest subarray sum $\ge$ target, Longest unique substring. |
+| **Two-Map Variable Window**| Tracks character frequencies against target frequency dictionary.| Window expands until `formed === required`; shrinks `left` to minimize. | **Minimum Window Substring** (`minWindowSubstring`). |
 
 ---
 
-## 3. Production Code Implementations
+## 2. Fixed-Size Window Implementations
+
+### 1. Maximum Sum Subarray of Size K (`maxSumSlidingWindow`)
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
 
 ```javascript
-// 1. Fixed Window: Max Sum Subarray of Size K - O(N) Time, O(1) Space
-function maxSubarraySum(arr, k) {
+function maxSumSlidingWindow(arr, k) {
   if (arr.length < k) return null;
 
   let windowSum = 0;
-
-  // Compute initial window of size k
-  for (let i = 0; i < k; i++) {
-    windowSum += arr[i];
-  }
-
+  for (let i = 0; i < k; i++) windowSum += arr[i];
   let maxSum = windowSum;
 
-  // Slide window from index k to N-1
-  for (let right = k; right < arr.length; right++) {
-    windowSum += arr[right] - arr[right - k]; // Add incoming, subtract outgoing
+  for (let i = k; i < arr.length; i++) {
+    windowSum += arr[i] - arr[i - k]; // Add right, remove left
     maxSum = Math.max(maxSum, windowSum);
   }
-
   return maxSum;
 }
+```
 
-// 2. Variable Window: Longest Substring Without Repeating Characters - O(N) Time
-function lengthOfLongestSubstring(s) {
-  const charMap = new Map(); // Store last seen character index
-  let left = 0;
-  let maxLength = 0;
+### 2. Sliding Window Maximum via Monotonic Deque (`maxOfSubarrays`)
+Find the maximum element in every contiguous subarray of size $k$.
+- **Monotonic Deque Invariant**: Stores indices of elements in strictly decreasing value order. The front of the deque (`deque[0]`) always points to the maximum element in the active window.
+- **Complexity**: Time $\mathcal{O}(n)$ (each index pushed and popped at most once), Space $\mathcal{O}(k)$.
 
-  for (let right = 0; right < s.length; right++) {
-    const currentChar = s[right];
+```javascript
+function maxOfSubarrays(arr, k) {
+  const result = [], deque = [];
 
-    // If duplicate character seen within current window, jump left pointer
-    if (charMap.has(currentChar) && charMap.get(currentChar) >= left) {
-      left = charMap.get(currentChar) + 1;
-    }
-
-    charMap.set(currentChar, right); // Update last seen index
-    maxLength = Math.max(maxLength, right - left + 1);
+  for (let i = 0; i < arr.length; i++) {
+    // 1. Remove indices that fall outside the active window boundary
+    while (deque.length > 0 && deque[0] < i - k + 1) deque.shift();
+    
+    // 2. Remove indices of smaller elements that cannot be maximums
+    while (deque.length > 0 && arr[deque[deque.length - 1]] <= arr[i]) deque.pop();
+    
+    deque.push(i);
+    if (i >= k - 1) result.push(arr[deque[0]]);
   }
-
-  return maxLength;
+  return result;
 }
+```
 
-// 3. Advanced Variable Window: Minimum Window Substring - O(N) Time
-function minWindow(s, t) {
-  if (s.length < t.length) return "";
+---
 
-  const targetMap = new Map();
-  for (const char of t) {
-    targetMap.set(char, (targetMap.get(char) || 0) + 1);
+## 3. Dynamic / Variable-Size Window Implementations
+
+```mermaid
+flowchart TD
+    ExpandRight["1. Expand Right Pointer: arr[right]"] --> CheckCondition{Is Window Condition Met?}
+    CheckCondition -->|No| ExpandRight
+    CheckCondition -->|Yes| RecordState["Record / Update Answer"]
+    RecordState --> ShrinkLeft["2. Shrink Left Pointer: arr[left]"]
+    ShrinkLeft --> CheckCondition
+```
+
+### 1. Smallest Subarray with Sum $\ge$ Target (`minSubarrayWithSum`)
+Find the minimum length of a contiguous subarray whose sum is $\ge target$.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(1)$.
+
+```javascript
+function minSubarrayWithSum(arr, target) {
+  let left = 0, windowSum = 0, minLength = Infinity;
+
+  for (let right = 0; right < arr.length; right++) {
+    windowSum += arr[right];
+
+    while (windowSum >= target) {
+      minLength = Math.min(minLength, right - left + 1);
+      windowSum -= arr[left];
+      left++;
+    }
   }
+  return minLength === Infinity ? 0 : minLength;
+}
+```
 
-  let requiredChars = targetMap.size;
-  let formedChars = 0;
+### 2. Longest Substring Without Repeating Characters (`longestSubstringWithoutRepeats`)
+Find the length of the longest substring without duplicate characters using a dynamic index map.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(\min(n, \text{charset}))$.
 
-  const windowCounts = new Map();
-  let left = 0;
-  let minLen = Infinity;
-  let minStart = 0;
+```javascript
+function longestSubstringWithoutRepeats(s) {
+  const charIndex = new Map();
+  let left = 0, maxLength = 0, bestStart = 0;
 
   for (let right = 0; right < s.length; right++) {
     const char = s[right];
-    windowCounts.set(char, (windowCounts.get(char) || 0) + 1);
+    if (charIndex.has(char) && charIndex.get(char) >= left) {
+      left = charIndex.get(char) + 1;
+    }
+    charIndex.set(char, right);
+    if (right - left + 1 > maxLength) {
+      maxLength = right - left + 1;
+      bestStart = left;
+    }
+  }
+  return { length: maxLength, substring: s.slice(bestStart, bestStart + maxLength) };
+}
+```
 
-    if (targetMap.has(char) && windowCounts.get(char) === targetMap.get(char)) {
-      formedChars++;
+### 3. Longest Substring with At Most K Distinct Characters (`longestSubstringKDistinct`)
+Maintain a dynamic window containing at most $k$ distinct characters using a frequency Map.
+
+```javascript
+function longestSubstringKDistinct(s, k) {
+  if (k === 0) return 0;
+  const freq = new Map();
+  let left = 0, maxLength = 0;
+
+  for (let right = 0; right < s.length; right++) {
+    freq.set(s[right], (freq.get(s[right]) || 0) + 1);
+
+    while (freq.size > k) {
+      const lc = s[left];
+      freq.set(lc, freq.get(lc) - 1);
+      if (freq.get(lc) === 0) freq.delete(lc);
+      left++;
     }
 
-    // Shrink window from left as long as all required chars are present
-    while (left <= right && formedChars === requiredChars) {
+    maxLength = Math.max(maxLength, right - left + 1);
+  }
+  return maxLength;
+}
+```
+
+### 4. Minimum Window Substring (`minWindowSubstring`)
+Find the smallest substring in $s$ containing all characters of pattern $t$.
+- **Complexity**: Time $\mathcal{O}(n + m)$, Space $\mathcal{O}(m)$.
+
+```javascript
+function minWindowSubstring(s, t) {
+  if (t.length > s.length) return "";
+
+  const need = new Map();
+  for (const c of t) need.set(c, (need.get(c) || 0) + 1);
+
+  const windowFreq = new Map();
+  let formed = 0, required = need.size;
+  let left = 0, minLen = Infinity, minStart = 0;
+
+  for (let right = 0; right < s.length; right++) {
+    const c = s[right];
+    windowFreq.set(c, (windowFreq.get(c) || 0) + 1);
+    if (need.has(c) && windowFreq.get(c) === need.get(c)) formed++;
+
+    while (formed === required) {
       if (right - left + 1 < minLen) {
         minLen = right - left + 1;
         minStart = left;
       }
-
-      const leftChar = s[left];
-      windowCounts.set(leftChar, windowCounts.get(leftChar) - 1);
-      if (targetMap.has(leftChar) && windowCounts.get(leftChar) < targetMap.get(leftChar)) {
-        formedChars--;
-      }
+      const lc = s[left];
+      windowFreq.set(lc, windowFreq.get(lc) - 1);
+      if (need.has(lc) && windowFreq.get(lc) < need.get(lc)) formed--;
       left++;
     }
   }
 
-  return minLen === Infinity ? "" : s.substring(minStart, minStart + minLen);
+  return minLen === Infinity ? "" : s.slice(minStart, minStart + minLen);
 }
-
-console.log("Max Subarray Sum (K=3) :", maxSubarraySum([2, 1, 5, 1, 3, 2], 3)); // 9
-console.log("Longest Unique Substr  :", lengthOfLongestSubstring("abcabcbb"));  // 3 ("abc")
-console.log("Min Window Substring   :", minWindow("ADOBECODEBANC", "ABC"));      // "BANC"
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Recognize Contiguous Array/String Patterns**: Whenever a problem mentions "contiguous subarray", "substring", or "running window of size $K$", think Sliding Window immediately.
-2. **Avoid Re-calculating Window Sums/State**: Instead of re-summing sub-arrays of size $K$ ($\mathcal{O}(N \cdot K)$), update the state incrementally: `newSum = oldSum + arr[right] - arr[right - K]`.
-3. **Use Map Index Jump Optimization**: In variable windows, store character indices in a `Map` to jump `left = charMap.get(char) + 1` directly, skipping intermediate decrements.
-4. **Amortized $\mathcal{O}(N)$ Analysis**: Even though variable sliding windows contain a nested `while` loop, both `left` and `right` pointers move forward at most $N$ times, guaranteeing overall linear $\mathcal{O}(N)$ runtime.
-
+1. **Incremental Updates**: Avoid re-summing or scanning subarrays from scratch; update states incrementally via `+ right - left`.
+2. **Fixed vs Variable Windows**: Use fixed windows when $k$ is given; use dynamic `right`/`left` pointers when optimizing length under a condition.
+3. **Monotonic Deque**: Solves maximum/minimum window problems in guaranteed $\mathcal{O}(n)$ time.
+4. **Pattern Keywords**: Look for "contiguous", "subarray", "substring", "consecutive", or "window".

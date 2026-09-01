@@ -1,131 +1,175 @@
-# Module 21: Dynamic Programming (DP) — Subproblem Memoization, Tabulation, and Space Optimization
+# Module 21: Dynamic Programming (DP), Memoization, & Tabulation
 
-## Overview
+## Theoretical Overview & Core Prerequisites
 
-**Dynamic Programming (DP)** is an algorithmic optimization technique that converts exponential $\mathcal{O}(2^N)$ brute-force solutions into polynomial **$\mathcal{O}(N)$ or $\mathcal{O}(N \cdot M)$ time solutions**.
-
-DP applies strictly when a problem satisfies two core mathematical properties:
-1. **Overlapping Subproblems**: The recursive search tree evaluates identical subproblems repeatedly.
-2. **Optimal Substructure**: The optimal solution to a larger problem can be constructed directly from optimal solutions of its smaller subproblems.
-
----
-
-## 1. Memoization (Top-Down) vs. Tabulation (Bottom-Up)
+**Dynamic Programming (DP)** is an optimization technique that converts exponential time brute-force algorithms ($\mathcal{O}(2^n)$) into polynomial time ($\mathcal{O}(n)$ or $\mathcal{O}(n^2)$) by solving each subproblem **once** and storing the result in a lookup table (cache).
 
 ```mermaid
 flowchart TD
-    DPApproaches[Dynamic Programming Approaches] --> TopDown["1. Top-Down Memoization<br/>- Recursive natural breakdown<br/>- Evaluates subproblems on-demand (Lazy)<br/>- Uses Hash Map / Cache Table<br/>- Call stack memory overhead: O(N)"]
-
-    DPApproaches --> BottomUp["2. Bottom-Up Tabulation<br/>- Iterative evaluation starting from base cases<br/>- Fills flat 1D / 2D array table sequentially<br/>- Zero Call Stack overhead<br/>- Enables 1D Space Optimization!"]
+    DPCheck[Dynamic Programming Validity] --> Overlapping["1. Overlapping Subproblems<br/>- Identical recursive sub-cases are evaluated repeatedly<br/>- Example: fib(5) calls fib(3) twice"]
+    
+    DPCheck --> OptimalSubstructure["2. Optimal Substructure<br/>- Optimal overall solution can be constructed from optimal subproblem solutions<br/>- Example: Shortest path A->C = min(A->B + B->C)"]
 ```
 
-### Top-Down vs. Bottom-Up Trade-off Matrix
-
-| Feature | Top-Down Memoization (Recursion + Cache) | Bottom-Up Tabulation (Iterative Table) |
-| :--- | :--- | :--- |
-| **Execution Flow** | Root $\to$ Base Cases (Unwinding) | Base Cases $\to$ Target State (Winding) |
-| **Subproblem Evaluation** | Only computes required subproblems (Lazy) | Computes all table entries systematically |
-| **Call Stack Memory** | $\mathcal{O}(N)$ recursion call stack overhead | **Zero** call stack overhead |
-| **Space Optimization** | Difficult to optimize space | **Easy** (Compress 2D table to 1D rolling array) |
+### Top-Down (Memoization) vs Bottom-Up (Tabulation)
+- **Top-Down (Memoization)**: Begins at target state $N$, recursing downwards while storing computed results in a Hash Map or Array cache. Natural to write from recursive formulations.
+- **Bottom-Up (Tabulation)**: Fills a table sequentially starting from base cases ($0, 1$) up to target state $N$. Eliminates recursion stack overhead and enables space optimizations.
 
 ---
 
-## 2. 2D State Matrix Transition Architecture (LCS Example)
+## 1. Dynamic Programming Problems Complexity Matrix
 
-```mermaid
-grid
-    subgraph 2D DP Table Cell Dependencies
-        LeftCell["dp[i][j-1] (Insert)"] --> TargetCell["Target: dp[i][j]"]
-        TopCell["dp[i-1][j] (Delete)"] --> TargetCell
-        DiagCell["dp[i-1][j-1] (Match + 1)"] --> TargetCell
-    end
-```
-
----
-
-## 3. Dynamic Programming Complexity & Pattern Matrix
-
-| DP Pattern Class | Subproblem State Formulation | Time Complexity | Auxiliary Space (Uncompressed) | Space (Compressed) |
+| Algorithm / Problem | State Transition Recurrence Relation | Time Complexity | Tabulation Auxiliary Space | Space-Optimized Space |
 | :--- | :--- | :--- | :--- | :--- |
-| **1D Linear DP** (Coin Change) | $\text{dp}[i] = \min_{c}(\text{dp}[i - c] + 1)$ | $\mathcal{O}(\text{Amount} \cdot N)$ | $\mathcal{O}(\text{Amount})$ | $\mathcal{O}(\text{Amount})$ |
-| **2D Grid DP** (Unique Paths) | $\text{dp}[i][j] = \text{dp}[i-1][j] + \text{dp}[i][j-1]$ | $\mathcal{O}(M \cdot N)$ | $\mathcal{O}(M \cdot N)$ | **$\mathcal{O}(N)$** |
-| **2D Sequence DP** (LCS) | $\text{dp}[i][j] = \text{dp}[i-1][j-1] + 1$ | $\mathcal{O}(M \cdot N)$ | $\mathcal{O}(M \cdot N)$ | **$\mathcal{O}(N)$** |
-| **0/1 Knapsack** | $\text{dp}[i][w] = \max(\text{dp}[i-1][w], v + \text{dp}[i-1][w-wt])$ | $\mathcal{O}(N \cdot W)$ | $\mathcal{O}(N \cdot W)$ | **$\mathcal{O}(W)$** |
+| **Fibonacci / Stairs**| $DP[i] = DP[i-1] + DP[i-2]$ | **$\mathcal{O}(n)$** | $\mathcal{O}(n)$ | **$\mathcal{O}(1)$** |
+| **Coin Change (Min)** | $DP[i] = \min(DP[i], DP[i - c] + 1) \quad \forall c \in \text{coins}$ | **$\mathcal{O}(\text{amount} \cdot k)$** | $\mathcal{O}(\text{amount})$ | $\mathcal{O}(\text{amount})$ |
+| **0/1 Knapsack** | $DP[i][w] = \max(DP[i-1][w], DP[i-1][w-w_i] + v_i)$ | **$\mathcal{O}(n \cdot W)$** | $\mathcal{O}(n \cdot W)$ | **$\mathcal{O}(W)$** |
+| **Longest Common Subseq**| Match: $DP[i-1][j-1] + 1$, Else: $\max(DP[i-1][j], DP[i][j-1])$ | **$\mathcal{O}(m \cdot n)$** | $\mathcal{O}(m \cdot n)$ | $\mathcal{O}(\min(m, n))$ |
+| **Longest Inc Subseq**| $DP[i] = \max_{j < i, A[j] < A[i]} (DP[j] + 1)$ (or Binary Search)| **$\mathcal{O}(n \log n)$** | $\mathcal{O}(n)$ | $\mathcal{O}(n)$ |
+| **Edit Distance** | Match: $DP[i-1][j-1]$, Else: $1 + \min(\text{Del}, \text{Ins}, \text{Rep})$ | **$\mathcal{O}(m \cdot n)$** | $\mathcal{O}(m \cdot n)$ | $\mathcal{O}(\min(m, n))$ |
 
 ---
 
-## 4. Production Code Implementations
+## 2. 1D Dynamic Programming Foundations
+
+### 1. Fibonacci Space-Optimized (`fibOptimal`)
+```javascript
+function fibOptimal(n) {
+  if (n <= 1) return n;
+  let prev2 = 0, prev1 = 1;
+  for (let i = 2; i <= n; i++) {
+    const curr = prev1 + prev2;
+    prev2 = prev1;
+    prev1 = curr;
+  }
+  return prev1;
+}
+```
+
+### 2. Climbing Stairs (`climbStairs`)
+Count the total ways to climb $n$ steps taking 1 or 2 steps at a time.
+- **Recurrence**: $DP[i] = DP[i-1] + DP[i-2]$ with base cases $DP[0] = 1, DP[1] = 1$.
+
+### 3. Minimum Coin Change with Selection Tracking (`coinChange`)
+Find the minimum coins needed to make up `amount` for arbitrary coin denominations.
 
 ```javascript
-// 1. Coin Change Problem (1D Bottom-Up DP) - O(Amount * N) Time, O(Amount) Space
 function coinChange(coins, amount) {
-  // dp[i] represents minimum coins needed to make amount i
-  const dp = new Float64Array(amount + 1).fill(Infinity);
-  dp[0] = 0; // Base case: 0 amount requires 0 coins
+  const dp = new Array(amount + 1).fill(Infinity);
+  const coinUsed = new Array(amount + 1).fill(-1);
+  dp[0] = 0;
 
   for (let i = 1; i <= amount; i++) {
-    for (let c = 0; c < coins.length; c++) {
-      const coin = coins[c];
-      if (i - coin >= 0) {
-        dp[i] = Math.min(dp[i], dp[i - coin] + 1);
+    for (const coin of coins) {
+      if (coin <= i && dp[i - coin] + 1 < dp[i]) {
+        dp[i] = dp[i - coin] + 1;
+        coinUsed[i] = coin;
       }
     }
   }
 
-  return dp[amount] === Infinity ? -1 : dp[amount];
+  const result = { minCoins: dp[amount] === Infinity ? -1 : dp[amount], coins: [] };
+  if (result.minCoins !== -1) {
+    let remaining = amount;
+    while (remaining > 0) {
+      result.coins.push(coinUsed[remaining]);
+      remaining -= coinUsed[remaining];
+    }
+  }
+  return result;
 }
+```
 
-// 2. Longest Common Subsequence (2D Tabulation) - O(M * N) Time, O(M * N) Space
+---
+
+## 3. 2D Dynamic Programming & Space Optimizations
+
+### 1. 0/1 Knapsack Problem (`knapsack` & `knapsackOptimized`)
+Maximize item values inside a knapsack of capacity $W$ where items cannot be divided.
+
+```javascript
+// Space-Optimized 1D Array: O(W) Space (Traverse right-to-left to prevent item reuse)
+function knapsackOptimized(weights, values, capacity) {
+  const dp = new Array(capacity + 1).fill(0);
+  for (let i = 0; i < weights.length; i++) {
+    for (let w = capacity; w >= weights[i]; w--) {
+      dp[w] = Math.max(dp[w], dp[w - weights[i]] + values[i]);
+    }
+  }
+  return dp[capacity];
+}
+```
+
+### 2. Longest Common Subsequence (`longestCommonSubsequence`)
+Find the longest subsequence common to two strings `text1` and `text2`.
+
+```javascript
 function longestCommonSubsequence(text1, text2) {
-  const m = text1.length;
-  const n = text2.length;
-  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  const m = text1.length, n = text2.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      if (text1[i - 1] === text2[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1; // Characters match!
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]); // Skip char from text1 or text2
-      }
+      if (text1[i - 1] === text2[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
     }
   }
 
+  let lcs = "", i = m, j = n;
+  while (i > 0 && j > 0) {
+    if (text1[i - 1] === text2[j - 1]) { lcs = text1[i - 1] + lcs; i--; j--; }
+    else if (dp[i - 1][j] > dp[i][j - 1]) i--;
+    else j--;
+  }
+  return { length: dp[m][n], subsequence: lcs };
+}
+```
+
+### 3. Longest Increasing Subsequence ($\mathcal{O}(n \log n)$ Binary Search: `lisBinarySearch`)
+Improve standard $\mathcal{O}(n^2)$ LIS DP to **$\mathcal{O}(n \log n)$** by maintaining a sorted dynamic `tails` array updated via Binary Search.
+
+```javascript
+function lisBinarySearch(nums) {
+  if (nums.length === 0) return 0;
+  const tails = [];
+  for (const num of nums) {
+    let lo = 0, hi = tails.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (tails[mid] < num) lo = mid + 1;
+      else hi = mid;
+    }
+    tails[lo] = num;
+  }
+  return tails.length;
+}
+```
+
+### 4. Levenshtein Edit Distance (`editDistance`)
+Find the minimum edit operations (insertions, deletions, substitutions) required to transform `word1` into `word2`.
+
+```javascript
+function editDistance(word1, word2) {
+  const m = word1.length, n = word2.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (word1[i - 1] === word2[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
   return dp[m][n];
 }
-
-// 3. Space-Optimized Longest Common Subsequence - O(M * N) Time, O(N) Space!
-function longestCommonSubsequenceSpaceOptimized(text1, text2) {
-  const n = text2.length;
-  let prevRow = new Int32Array(n + 1);
-  let currRow = new Int32Array(n + 1);
-
-  for (let i = 1; i <= text1.length; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (text1[i - 1] === text2[j - 1]) {
-        currRow[j] = prevRow[j - 1] + 1;
-      } else {
-        currRow[j] = Math.max(prevRow[j], currRow[j - 1]);
-      }
-    }
-    // Swap row buffers for next iteration (Zero memory allocation in loop!)
-    [prevRow, currRow] = [currRow, prevRow];
-  }
-
-  return prevRow[n];
-}
-
-console.log("Coin Change (11)      :", coinChange([1, 2, 5], 11)); // 3 (5 + 5 + 1)
-console.log("LCS ('abcde', 'ace')  :", longestCommonSubsequence("abcde", "ace")); // 3 ("ace")
-console.log("LCS Space-Optimized   :", longestCommonSubsequenceSpaceOptimized("abcde", "ace")); // 3
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Identify the State Parameters First**: Define `dp[i]` or `dp[i][j]` clearly before writing code. State parameters represent the minimum variable set needed to define a subproblem.
-2. **Compress 2D Tables to 1D Arrays**: If state transition `dp[i][j]` depends only on the current row `i` and previous row `i - 1`, replace the 2D array with two 1D arrays (`prevRow` and `currRow`) to reduce memory from $\mathcal{O}(M \cdot N)$ to $\mathcal{O}(N)$.
-3. **Use TypedArrays for Maximum V8 JIT Optimization**: Replace JS nested generic arrays `[]` with `Int32Array` or `Float64Array` for fast flat memory access without GC overhead.
-4. **Prefer Bottom-Up Iteration for Critical Path APIs**: Bottom-up tabulation eliminates recursion stack frame overhead and prevents `RangeError: Maximum call stack size exceeded` on large inputs.
-
+1. **Prerequisite Identification**: DP applies ONLY when a problem exhibits both **Overlapping Subproblems** and **Optimal Substructure**.
+2. **0/1 Knapsack Right-to-Left Traversal**: Iterating right-to-left across capacity `w` in 1D array DP prevents reusing the same item multiple times.
+3. **Patience Sorting LIS Optimization**: Binary Search on the `tails` array improves LIS runtime from $\mathcal{O}(n^2)$ to $\mathcal{O}(n \log n)$.
+4. **State Reconstruction**: Reconstruct optimal sequences (e.g., LCS or selected coins) by backtracking from final state $DP[m][n]$ back to base cases.

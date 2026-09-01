@@ -1,175 +1,227 @@
-# Module 15: Tries (Prefix Trees), Autocomplete Engines, and Prefix Search
+# Module 15: Tries (Prefix Trees), Autocomplete Engines, & Prefix Searching
 
-## Overview
+## Theoretical Overview & Shared Prefix Architecture
 
-A **Trie** (derived from "re**trie**val", pronounced "try") is an $N$-ary **Prefix Tree** designed for storing strings and performing prefix-based searches.
-
-Unlike Hash Maps—where string keys are evaluated as a whole—a Trie breaks strings down character-by-character along directed path branches. This guarantees **$\mathcal{O}(K)$ operation time** (where $K$ is the length of the string), completely independent of the total number of words ($N$) stored in the dictionary!
-
----
-
-## 1. Trie Node Architecture & Path Branching
+A **Trie** (pronounced "try", originating from *re-trie-val*) or **Prefix Tree** is a tree-based data structure optimized for character string lookups. Unlike a standard binary tree, node keys are not stored explicitly within individual nodes; instead, a node's position in the tree defines its associated character prefix.
 
 ```mermaid
-graph TD
-    Root["Root Node (Empty '')"] --> C_c["'c'"]
-    Root --> C_a["'a'"]
-
-    C_c --> C_a2["'a'"]
-    C_a2 --> C_t["'t' (isWordEnd = true)<br/>[Word: 'cat']"]
-    C_a2 --> C_r["'r' (isWordEnd = true)<br/>[Word: 'car']"]
-
-    C_a --> C_p1["'p'"]
-    C_p1 --> C_p2["'p' (isWordEnd = true)<br/>[Word: 'app']"]
-    C_p2 --> C_l["'l'"]
-    C_l --> C_e["'e' (isWordEnd = true)<br/>[Word: 'apple']"]
+flowchart TD
+    Root["Root Node (empty)"] --> B["'b'"]
+    B --> E["'e'"]
+    E --> S["'s'"]
+    S --> T["'t' (isEndOfWord = true)"]
+    
+    T --> R["'r'"]
+    R --> E2["'e'"]
+    E2 --> S2["'s' (isEndOfWord = true)"]
+    
+    Root --> C["'c'"]
+    C --> A["'a'"]
+    A --> T2["'t' (isEndOfWord = true)"]
 ```
 
----
-
-## 2. Autocomplete Suggestion Generation Workflow
-
-To generate autocomplete predictions for a user's typed prefix (e.g. `"ca"`):
-1. **Navigate to Prefix Node**: Traverse the Trie following characters `'c'` then `'a'`.
-2. **Collect Descendants via DFS**: Run a Depth-First Search from the prefix node to gather all complete words where `isWordEnd === true`.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User Input: "ca"
-    participant Engine as Autocomplete Engine
-    participant Trie as Trie Structure
-    participant DFS as Recursive DFS Collector
-
-    User->>Engine: getSuggestions("ca")
-    Engine->>Trie: Traverse 'c' -> 'a'
-    Trie-->>Engine: Returns Prefix Node ('a')
-    
-    Engine->>DFS: Collect words from Prefix Node ('a')
-    DFS->>DFS: Path 'a' -> 't' (isWordEnd = true) -> Add "cat"
-    DFS->>DFS: Path 'a' -> 'r' (isWordEnd = true) -> Add "car"
-    
-    Engine-->>User: Returns Suggestions: ["cat", "car"]
-```
+### Shared Memory Overhead Optimization
+In a Trie, words sharing common prefixes (e.g., `"best"`, `"bestresort"`, `"cat"`, `"cattle"`) share identical ancestor node paths. This eliminates duplicate storage for overlapping prefixes.
 
 ---
 
-## 3. Operations Complexity Matrix
+## 1. Complexity & Structural Comparison Matrix
 
-| Operation | Time Complexity | Auxiliary Space | Key Factor |
-| :--- | :--- | :--- | :--- |
-| **Insert Word** | $\mathcal{O}(K)$ | $\mathcal{O}(K)$ | $K = \text{length of word being inserted}$. |
-| **Search Word** | $\mathcal{O}(K)$ | $\mathcal{O}(1)$ | Returns true only if path exists AND `isWordEnd === true`. |
-| **StartsWith Prefix**| $\mathcal{O}(K)$ | $\mathcal{O}(1)$ | Returns true if valid path exists for prefix. |
-| **Autocomplete** | $\mathcal{O}(K + P)$ | $\mathcal{O}(P)$ | $P = \text{total characters across matched suggestion words}$. |
+Let $m$ be the length of the string query and $n$ be the total number of words in the dictionary.
+
+| Data Structure / Operation | Insert Word | Exact Search | Prefix Search (`startsWith`) | Autocomplete Return | Space Complexity |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Hash Map / Set** | $\mathcal{O}(m)$ | **$\mathcal{O}(m)$** | $\mathcal{O}(n \cdot m)$ (Full Scan) | $\mathcal{O}(n \cdot m)$ | $\mathcal{O}(n \cdot m)$ duplicate keys |
+| **Trie (Prefix Tree)** | **$\mathcal{O}(m)$** | **$\mathcal{O}(m)$** | **$\mathcal{O}(m)$** | **$\mathcal{O}(m + k)$** | **$\mathcal{O}(\text{unique prefixes})$** |
 
 ---
 
-## 4. Production Trie & Autocomplete Implementation Code
+## 2. Core Trie Implementation
 
 ```javascript
 class TrieNode {
   constructor() {
-    this.children = new Map(); // Character -> TrieNode mapping
-    this.isWordEnd = false;
+    this.children = new Map(); // Map character -> TrieNode
+    this.isEndOfWord = false;
   }
 }
 
 class Trie {
-  constructor() {
-    this.root = new TrieNode();
-  }
+  constructor() { this.root = new TrieNode(); }
 
-  // O(K) Insertion
   insert(word) {
     let current = this.root;
-
-    for (let i = 0; i < word.length; i++) {
-      const char = word[i];
+    for (const char of word) {
       if (!current.children.has(char)) {
         current.children.set(char, new TrieNode());
       }
       current = current.children.get(char);
     }
-
-    current.isWordEnd = true;
+    current.isEndOfWord = true;
   }
 
-  // O(K) Exact Word Search
   search(word) {
-    let current = this.root;
-
-    for (let i = 0; i < word.length; i++) {
-      const char = word[i];
-      if (!current.children.has(char)) return false;
-      current = current.children.get(char);
-    }
-
-    return current.isWordEnd;
+    const node = this._findNode(word);
+    return node !== null && node.isEndOfWord;
   }
 
-  // O(K) Prefix Check
-  startsWith(prefix) {
-    let current = this.root;
+  startsWith(prefix) { return this._findNode(prefix) !== null; }
 
-    for (let i = 0; i < prefix.length; i++) {
-      const char = prefix[i];
-      if (!current.children.has(char)) return false;
+  _findNode(str) {
+    let current = this.root;
+    for (const char of str) {
+      if (!current.children.has(char)) return null;
       current = current.children.get(char);
     }
-
-    return true;
+    return current;
   }
 
-  // Autocomplete Suggestions Engine - O(K + P) Time
-  getAutocompleteSuggestions(prefix) {
-    let current = this.root;
+  delete(word) { this._deleteHelper(this.root, word, 0); }
 
-    // 1. Navigate to Prefix Node
-    for (let i = 0; i < prefix.length; i++) {
-      const char = prefix[i];
-      if (!current.children.has(char)) return []; // Prefix not found
-      current = current.children.get(char);
+  _deleteHelper(node, word, depth) {
+    if (node === null) return false;
+    if (depth === word.length) {
+      if (!node.isEndOfWord) return false;
+      node.isEndOfWord = false;
+      return node.children.size === 0;
     }
+    const char = word[depth];
+    const child = node.children.get(char);
+    if (!child) return false;
+    if (this._deleteHelper(child, word, depth + 1)) {
+      node.children.delete(char);
+      return node.children.size === 0 && !node.isEndOfWord;
+    }
+    return false;
+  }
 
-    // 2. DFS Traversal to collect all words starting from prefix node
+  getWordsWithPrefix(prefix) {
+    const node = this._findNode(prefix);
+    if (node === null) return [];
     const results = [];
-    this._dfsCollectWords(current, prefix, results);
+    this._collectWords(node, prefix, results);
     return results;
   }
 
-  _dfsCollectWords(node, currentPath, results) {
-    if (node.isWordEnd) {
-      results.push(currentPath);
-    }
-
-    for (const [char, childNode] of node.children.entries()) {
-      this._dfsCollectWords(childNode, currentPath + char, results);
+  _collectWords(node, currentWord, results) {
+    if (node.isEndOfWord) results.push(currentWord);
+    for (const [char, child] of node.children) {
+      this._collectWords(child, currentWord + char, results);
     }
   }
+
+  autocomplete(prefix, limit = 5) {
+    return this.getWordsWithPrefix(prefix).slice(0, limit);
+  }
 }
-
-// Verification
-const dictionary = new Trie();
-dictionary.insert("cat");
-dictionary.insert("car");
-dictionary.insert("card");
-dictionary.insert("care");
-dictionary.insert("app");
-dictionary.insert("apple");
-
-console.log("Search 'cat'     :", dictionary.search("cat"));                // true
-console.log("StartsWith 'ca'  :", dictionary.startsWith("ca"));            // true
-console.log("Suggestions 'ca' :", dictionary.getAutocompleteSuggestions("ca")); 
-// Output: ["cat", "car", "card", "care"]
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Practical Algorithmic Problem Patterns
 
-1. **Independent of Dictionary Size**: Searching in a Trie depends strictly on word length $K$ ($\mathcal{O}(K)$), not the number of words $N$. This makes Tries faster than Hash Maps for prefix searches.
-2. **Ideal for Autocomplete & Search Suggestions**: Tries allow instantly locating prefix subtrees and iterating descendants to suggest top query completions.
-3. **Be Mindful of Memory Overhead**: Tries create many small `TrieNode` objects in memory. For memory-constrained environments, use a **Radix Tree (Compressed Trie)** which merges single-child node chains (e.g. `'a' -> 'p' -> 'p' -> 'l' -> 'e'` into `'apple'`).
-4. **Use Fixed Length Arrays for Monomorphic Character Sets**: For standard lowercase English alphabet inputs (`a-z`), replacing `Map` with a fixed `new Array(26)` yields faster V8 pointer lookups.
+### 1. Count Words Matching Prefix (`countWordsWithPrefix`)
+Find the total number of dictionary words sharing a specified prefix in $\mathcal{O}(m + k)$ time.
 
+```javascript
+function countWordsWithPrefix(trie, prefix) {
+  const node = trie._findNode(prefix);
+  if (node === null) return 0;
+  return countEndOfWords(node);
+}
+
+function countEndOfWords(node) {
+  let count = node.isEndOfWord ? 1 : 0;
+  for (const [, child] of node.children) count += countEndOfWords(child);
+  return count;
+}
+```
+
+### 2. Longest Common Prefix (`longestCommonPrefix`)
+Find the longest common prefix among an array of strings by traversing single-child paths starting from the root.
+
+```javascript
+function longestCommonPrefix(words) {
+  if (words.length === 0) return "";
+  const lcpTrie = new Trie();
+  words.forEach(w => lcpTrie.insert(w));
+
+  let current = lcpTrie.root, prefix = "";
+  while (current.children.size === 1 && !current.isEndOfWord) {
+    const [char, child] = current.children.entries().next().value;
+    prefix += char;
+    current = child;
+  }
+  return prefix;
+}
+```
+
+### 3. Word Break Problem (`wordBreak`)
+Validate if string `s` can be segmented into space-separated dictionary words using Dynamic Programming combined with a Trie.
+
+```javascript
+function wordBreak(s, wordDict) {
+  const dictTrie = new Trie();
+  wordDict.forEach(w => dictTrie.insert(w));
+  const dp = new Array(s.length + 1).fill(false);
+  dp[0] = true;
+  for (let i = 1; i <= s.length; i++) {
+    for (let j = 0; j < i; j++) {
+      if (dp[j] && dictTrie.search(s.substring(j, i))) {
+        dp[i] = true;
+        break;
+      }
+    }
+  }
+  return dp[s.length];
+}
+```
+
+### 4. Sentence Token Prefix Replacement (`replaceWords`)
+Replace words in a sentence with their shortest matching root prefix (e.g., `"the cattle was rattled"` $\to$ `"the cat was rat"`).
+
+```javascript
+function replaceWords(roots, sentence) {
+  const rootTrie = new Trie();
+  roots.forEach(r => rootTrie.insert(r));
+
+  return sentence.split(" ").map(word => {
+    let current = rootTrie.root, prefix = "";
+    for (const char of word) {
+      if (current.isEndOfWord) return prefix;
+      if (!current.children.has(char)) return word;
+      current = current.children.get(char);
+      prefix += char;
+    }
+    return current.isEndOfWord ? prefix : word;
+  }).join(" ");
+}
+```
+
+### 5. Amazon Search Suggestion Engine (`searchSuggestions`)
+Generate real-time search suggestions as a user types each character of a query string.
+
+```javascript
+function searchSuggestions(products, searchWord) {
+  const sugTrie = new Trie();
+  products.forEach(p => sugTrie.insert(p));
+  const results = [];
+  let prefix = "";
+  for (const char of searchWord) {
+    prefix += char;
+    const matches = sugTrie.getWordsWithPrefix(prefix);
+    matches.sort();
+    results.push(matches.slice(0, 3));
+  }
+  return results;
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Prefix Search Dominance**: Tries execute prefix checks and autocomplete in $\mathcal{O}(m)$ time, outperforming Hash Maps which require full $\mathcal{O}(n \cdot m)$ table scans.
+2. **Node Map vs Fixed Array**: Utilizing `new Map()` for child nodes optimizes RAM compared to fixed 26-element arrays for mixed alphabets and Unicode strings.
+3. **Pruning Deletion**: Deleting words requires bottom-up recursive pruning of child nodes that no longer lead to valid word ends.
+4. **Autocomplete Architecture**: Powers search engines, dictionary spell-checkers, IP routing tables, and IDE code completion.

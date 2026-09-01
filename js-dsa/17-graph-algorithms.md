@@ -1,158 +1,219 @@
-# Module 17: Graph Traversal Algorithms — BFS, DFS, Topological Sort, and Dijkstra's Shortest Path
+# Module 17: Graph Algorithms — Dijkstra, Topological Sort, & Cycle Detection
 
-## Overview
+## Theoretical Overview & Shortest Path Mechanics
 
-Graph traversal and pathfinding algorithms systematically explore nodes and edges in a graph $G = (V, E)$.
-
-While **Breadth-First Search (BFS)** computes shortest unweighted paths and **Depth-First Search (DFS)** detects cycles and connected components, **Topological Sort** provides build dependencies for Directed Acyclic Graphs (DAGs), and **Dijkstra's Algorithm** calculates shortest paths across non-negatively weighted graphs.
-
----
-
-## 1. Graph Traversals & Shortest Path Algorithms Comparison
+Graph algorithms optimize routing paths, calculate task dependency execution order, and prevent system deadlocks.
 
 ```mermaid
-flowchart TD
-    AlgoChoice[Select Graph Algorithm] --> GraphType{Is Graph Weighted or Unweighted?}
-
-    GraphType -- Unweighted --> UnweightedChoice{Goal: Shortest Path or Branch Exploration?}
-    UnweightedChoice -- Shortest Path --> BFS["Breadth-First Search (BFS)<br/>- Queue (FIFO)<br/>- O(V + E) Time<br/>- Guarantees shortest path in unweighted graphs"]
-    UnweightedChoice -- Branch Exploration --> DFS["Depth-First Search (DFS)<br/>- Stack / Recursion<br/>- O(V + E) Time<br/>- Detects cycles & connected components"]
-
-    GraphType -- Weighted --> WeightedChoice{Are edge weights non-negative?}
-    WeightedChoice -- Non-Negative Weights --> Dijkstra["Dijkstra's Algorithm<br/>- Min-Priority Queue<br/>- O((V + E) log V) Time<br/>- Finds shortest distance path"]
-    WeightedChoice -- Negative Weights --> BellmanFord["Bellman-Ford Algorithm<br/>- Dynamic Programming<br/>- O(V * E) Time<br/>- Handles negative edge weights"]
-```
-
-### Graph Algorithms Complexity Matrix
-
-| Algorithm | Graph Requirement | Time Complexity | Auxiliary Space | Key Mechanics |
-| :--- | :--- | :--- | :--- | :--- |
-| **BFS** | Any Graph | $\mathcal{O}(V + E)$ | $\mathcal{O}(V)$ | Level-by-level Queue exploration. |
-| **DFS** | Any Graph | $\mathcal{O}(V + E)$ | $\mathcal{O}(V)$ | Recursive branch deepening with Call Stack. |
-| **Topological Sort** | **DAG Only** | $\mathcal{O}(V + E)$ | $\mathcal{O}(V)$ | Kahn's Algorithm (In-degree queue) or DFS. |
-| **Dijkstra's** | Non-negative Weights | $\mathcal{O}((V + E) \log V)$ | $\mathcal{O}(V)$ | Min-Priority Queue greedy relaxation. |
-
----
-
-## 2. Dijkstra's Shortest Path Relaxation Workflow
-
-Dijkstra's algorithm tracks tentative distances from a source node to all other nodes, greedily popping the node with the minimum distance and relaxing its adjacent edge costs:
-
-$$\text{If } \text{dist}[u] + \text{weight}(u, v) < \text{dist}[v] \implies \text{Update } \text{dist}[v] = \text{dist}[u] + \text{weight}(u, v)$$
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant PQ as Min Priority Queue
-    participant Dist as Distance Map: {A: 0, B: ∞, C: ∞, D: ∞}
-    participant Graph as Edge Weights: A->B(4), A->C(2), C->B(1)
-
-    PQ->>Dist: Pop min node (A, dist 0)
-    Dist->>Graph: Relax neighbor B: 0 + 4 = 4 < ∞ -> Update dist[B] = 4
-    Dist->>Graph: Relax neighbor C: 0 + 2 = 2 < ∞ -> Update dist[C] = 2
-    Graph-->>PQ: Push (C, 2) and (B, 4)
-
-    PQ->>Dist: Pop min node (C, dist 2)
-    Dist->>Graph: Relax neighbor B via C: dist[C] (2) + C->B (1) = 3 < dist[B] (4)!
-    Graph-->>Dist: UPDATE dist[B] = 3! (Shorter path found via C!)
+flowchart LR
+    Koramangala["Koramangala"] -->|10 min| HSR["HSR Layout"]
+    Koramangala -->|15 min| Indiranagar["Indiranagar"]
+    HSR -->|8 min| BTM["BTM Layout"]
+    HSR -->|12 min| SilkBoard["Silk Board"]
+    BTM -->|7 min| Jayanagar["Jayanagar"]
+    Indiranagar -->|10 min| MGRoad["MG Road"]
+    Indiranagar -->|12 min| Marathahalli["Marathahalli"]
+    SilkBoard -->|15 min| Marathahalli
 ```
 
 ---
 
-## 3. Production Graph Algorithms Implementation Code
+## 1. Graph Algorithms Matrix
+
+| Algorithm | Graph Type | Edge Weights | Time Complexity | Auxiliary Space | Key Mechanism |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Dijkstra's Algorithm** | Directed / Undirected | **Non-Negative $(\ge 0)$** | **$\mathcal{O}((V + E) \log V)$** | $\mathcal{O}(V)$ | Greedy relaxation using Min-Heap Priority Queue. |
+| **Bellman-Ford Algorithm**| Directed / Undirected | Negative allowed | $\mathcal{O}(V \cdot E)$ | $\mathcal{O}(V)$ | Relaxes all edges $V-1$ times; detects negative cycles. |
+| **Kahn's Topological Sort**| **DAG (Directed Acyclic)**| Unweighted / Weighted | **$\mathcal{O}(V + E)$** | $\mathcal{O}(V)$ | In-degree 0 FIFO Queue reduction. |
+| **3-Color Cycle Detection**| Directed Graph | Any | **$\mathcal{O}(V + E)$** | $\mathcal{O}(V)$ | State coloring: WHITE (Unvisited), GRAY (Active Stack), BLACK (Done). |
+| **Undirected Parent DFS** | Undirected Graph | Any | **$\mathcal{O}(V + E)$** | $\mathcal{O}(V)$ | DFS traversal checking non-parent visited neighbors. |
+
+---
+
+## 2. Dijkstra's Shortest Path Algorithm
+
+Dijkstra's algorithm finds the shortest distance from a single source vertex to all other vertices in a weighted graph with non-negative edge weights.
+
+### Edge Relaxation Invariant
+For an edge $(u, v)$ with weight $w$:
+
+$$\text{if } \text{distances}[u] + w < \text{distances}[v] \implies \text{distances}[v] = \text{distances}[u] + w$$
 
 ```javascript
-class GraphAlgorithms {
-  constructor(adjacencyList) {
-    this.list = adjacencyList; // Map of vertex -> Array of { node, weight }
+function dijkstra(graph, source) {
+  const distances = new Map(), previous = new Map(), visited = new Set();
+  const pq = new MinPriorityQueue();
+
+  for (const v of graph.getVertices()) {
+    distances.set(v, Infinity);
+    previous.set(v, null);
   }
+  distances.set(source, 0);
+  pq.enqueue(source, 0);
 
-  // 1. Breadth-First Search (Shortest Path Unweighted) - O(V + E) Time
-  bfs(start) {
-    const visited = new Set([start]);
-    const queue = [start];
-    const result = [];
+  while (!pq.isEmpty()) {
+    const { element: current, priority: currentDist } = pq.dequeue();
+    if (visited.has(current)) continue;
+    visited.add(current);
+    if (currentDist > distances.get(current)) continue;
 
-    while (queue.length > 0) {
-      const vertex = queue.shift();
-      result.push(vertex);
-
-      for (const neighbor of this.list.get(vertex) || []) {
-        const neighborNode = typeof neighbor === "object" ? neighbor.node : neighbor;
-        if (!visited.has(neighborNode)) {
-          visited.add(neighborNode);
-          queue.push(neighborNode);
-        }
+    for (const edge of graph.getNeighbors(current)) {
+      if (visited.has(edge.node)) continue;
+      const newDist = distances.get(current) + edge.weight;
+      if (newDist < distances.get(edge.node)) {
+        distances.set(edge.node, newDist);
+        previous.set(edge.node, current);
+        pq.enqueue(edge.node, newDist);
       }
     }
-
-    return result;
   }
-
-  // 2. Topological Sort (Kahn's In-Degree Algorithm) - O(V + E) Time
-  topologicalSort() {
-    const inDegree = new Map();
-    const zeroInDegreeQueue = [];
-    const sortedOrder = [];
-
-    // Initialize in-degree counts for all vertices
-    for (const vertex of this.list.keys()) {
-      inDegree.set(vertex, 0);
-    }
-
-    for (const [u, neighbors] of this.list.entries()) {
-      for (const neighbor of neighbors) {
-        const v = typeof neighbor === "object" ? neighbor.node : neighbor;
-        inDegree.set(v, (inDegree.get(v) || 0) + 1);
-      }
-    }
-
-    // Push nodes with zero in-degree to queue
-    for (const [vertex, count] of inDegree.entries()) {
-      if (count === 0) zeroInDegreeQueue.push(vertex);
-    }
-
-    // Process zero in-degree nodes
-    while (zeroInDegreeQueue.length > 0) {
-      const u = zeroInDegreeQueue.shift();
-      sortedOrder.push(u);
-
-      for (const neighbor of this.list.get(u) || []) {
-        const v = typeof neighbor === "object" ? neighbor.node : neighbor;
-        inDegree.set(v, inDegree.get(v) - 1);
-        if (inDegree.get(v) === 0) {
-          zeroInDegreeQueue.push(v);
-        }
-      }
-    }
-
-    // If topological sort does not include all vertices, graph contains a cycle!
-    if (sortedOrder.length !== this.list.size) {
-      throw new Error("Cycle Detected: Topological sort only possible on DAGs!");
-    }
-
-    return sortedOrder;
-  }
+  return { distances, previous };
 }
 
-// Verification of Topological Sort (Dependency Tree)
-const buildGraph = new Map();
-buildGraph.set("Compile TS", ["Bundle JS"]);
-buildGraph.set("Bundle JS", ["Run Tests"]);
-buildGraph.set("Run Tests", ["Deploy"]);
-buildGraph.set("Deploy", []);
-
-const solver = new GraphAlgorithms(buildGraph);
-console.log("Topological Order:", solver.topologicalSort());
-// Output: ["Compile TS", "Bundle JS", "Run Tests", "Deploy"]
+function getPath(previous, target) {
+  const path = [];
+  let current = target;
+  while (current !== null) { path.unshift(current); current = previous.get(current); }
+  return path;
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Topological Sort (Kahn's BFS Algorithm)
 
-1. **Always Use a `visited` Set**: Graphs contain cycles. Failing to mark visited nodes in BFS/DFS leads to infinite recursion loops and memory exhaustion.
-2. **Use BFS for Unweighted Shortest Paths**: BFS is guaranteed to discover the shortest path in unweighted graphs because it visits nodes in strictly increasing distance order.
-3. **Use Kahn's Algorithm for Build Dependency Resolution**: Topological sorting via Kahn's in-degree queue resolves task dependencies and detects circular dependency errors.
-4. **Guard Against Negative Edge Weights in Dijkstra**: Dijkstra's algorithm assumes edge weights are non-negative. If edge weights can be negative, use the **Bellman-Ford Algorithm**.
+A **Topological Ordering** of a Directed Acyclic Graph (DAG) is a linear ordering of vertices such that for every directed edge $u \to v$, vertex $u$ comes before $v$ in the sequence.
 
+```mermaid
+flowchart LR
+    Math["Math Basics"] --> Algebra["Algebra"]
+    Math --> Geometry["Geometry"]
+    Algebra --> Calc["Calculus"]
+    Algebra --> LinAlg["Linear Algebra"]
+    Calc --> ML["Machine Learning"]
+    LinAlg --> ML
+```
+
+```javascript
+function topologicalSortKahns(graph) {
+  const inDegree = new Map(), result = [];
+
+  for (const v of graph.getVertices()) inDegree.set(v, 0);
+  for (const v of graph.getVertices()) {
+    for (const edge of graph.getNeighbors(v)) {
+      inDegree.set(edge.node, (inDegree.get(edge.node) || 0) + 1);
+    }
+  }
+
+  const queue = [];
+  for (const [v, deg] of inDegree) if (deg === 0) queue.push(v);
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    result.push(current);
+    for (const edge of graph.getNeighbors(current)) {
+      inDegree.set(edge.node, inDegree.get(edge.node) - 1);
+      if (inDegree.get(edge.node) === 0) queue.push(edge.node);
+    }
+  }
+
+  if (result.length !== graph.getVertices().length) return null; // Cycle detected!
+  return result;
+}
+```
+
+---
+
+## 4. Cycle Detection Algorithms
+
+### 1. Undirected Graphs: DFS Parent Tracking (`hasCycleUndirected`)
+In an undirected graph, a cycle exists if a neighbor is already visited and is **not** the direct parent of the current node.
+
+```javascript
+function hasCycleUndirected(graph) {
+  const visited = new Set();
+  function dfs(node, parent) {
+    visited.add(node);
+    for (const edge of graph.getNeighbors(node)) {
+      if (!visited.has(edge.node)) { if (dfs(edge.node, node)) return true; }
+      else if (edge.node !== parent) return true;
+    }
+    return false;
+  }
+  for (const v of graph.getVertices()) {
+    if (!visited.has(v) && dfs(v, null)) return true;
+  }
+  return false;
+}
+```
+
+### 2. Directed Graphs: 3-Color DFS Algorithm (`hasCycleDirected`)
+- `WHITE (0)`: Unvisited vertex.
+- `GRAY (1)`: Currently being visited (active on current call stack).
+- `BLACK (2)`: Fully explored vertex.
+
+A back-edge encountered pointing to a `GRAY` node indicates a **directed cycle**.
+
+```javascript
+function hasCycleDirected(graph) {
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map();
+  for (const v of graph.getVertices()) color.set(v, WHITE);
+
+  function dfs(node) {
+    color.set(node, GRAY);
+    for (const edge of graph.getNeighbors(node)) {
+      if (color.get(edge.node) === GRAY) return true; // Cycle back-edge detected!
+      if (color.get(edge.node) === WHITE && dfs(edge.node)) return true;
+    }
+    color.set(node, BLACK);
+    return false;
+  }
+  for (const v of graph.getVertices()) {
+    if (color.get(v) === WHITE && dfs(v)) return true;
+  }
+  return false;
+}
+```
+
+---
+
+## 5. Practical Problem: Course Schedule (`canFinishCourses`)
+
+Validates whether a student can complete `numCourses` given prerequisite constraints using Kahn's topological sorting.
+
+```javascript
+function canFinishCourses(numCourses, prerequisites) {
+  const graph = new Map(), inDegree = new Map();
+  for (let i = 0; i < numCourses; i++) { graph.set(i, []); inDegree.set(i, 0); }
+
+  for (const [course, prereq] of prerequisites) {
+    graph.get(prereq).push(course);
+    inDegree.set(course, inDegree.get(course) + 1);
+  }
+
+  const queue = [];
+  for (const [c, deg] of inDegree) if (deg === 0) queue.push(c);
+
+  let processed = 0;
+  const order = [];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    order.push(current); processed++;
+    for (const next of graph.get(current)) {
+      inDegree.set(next, inDegree.get(next) - 1);
+      if (inDegree.get(next) === 0) queue.push(next);
+    }
+  }
+  return { canFinish: processed === numCourses, order: processed === numCourses ? order : null };
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Dijkstra's Greedy Relaxation**: Always extracts the minimum tentative distance node from a Priority Queue in $\mathcal{O}((V + E) \log V)$ time.
+2. **Non-Negative Weight Limitation**: Dijkstra requires all edge weights $w \ge 0$; use Bellman-Ford for negative weights.
+3. **Kahn's Topological Sort**: Processes nodes with `inDegree === 0` to calculate valid build/course schedules.
+4. **3-Color Directed Cycle Detection**: Encountering a `GRAY` node during DFS proves the presence of a directed cycle.

@@ -1,158 +1,151 @@
-# Module 09: Elementary Sorting Algorithms — Bubble, Selection, and Insertion Sort
+# Module 09: Basic Sorting Algorithms & Algorithmic Trade-offs
 
-## Overview
+## Theoretical Overview & Core Sorting Attributes
 
-Elementary sorting algorithms—**Bubble Sort**, **Selection Sort**, and **Insertion Sort**—operate via comparison-based passes over input arrays with $\mathcal{O}(N^2)$ average and worst-case time complexity.
-
-Despite their quadratic scaling, understanding their mechanics is essential: **Insertion Sort** outperforms complex $\mathcal{O}(N \log N)$ algorithms on small datasets ($N \le 16$) or nearly-sorted data, serving as the base-case sorting engine in production hybrid algorithms like **Timsort** and **IntroSort**.
-
----
-
-## 1. Algorithm Stability and Comparison Matrix
-
-### Definition of Sorting Stability
-A sorting algorithm is **Stable** if it guarantees that two items with equal keys maintain their original relative order after sorting.
-
-```mermaid
-graph TD
-    subgraph Stable Sort Guarantee
-        InputList["Input: [('Card A', 5), ('Card B', 5)]"] --> StableResult["Output: [('Card A', 5), ('Card B', 5)]<br/>Relative order preserved!"]
-    end
-
-    subgraph Unstable Sort
-        InputList2["Input: [('Card A', 5), ('Card B', 5)]"] --> UnstableResult["Output: [('Card B', 5), ('Card A', 5)]<br/>Relative order disrupted!"]
-    end
-```
-
-### Elementary Sorting Algorithms Matrix
-
-| Algorithm | Best-Case Time | Average-Case Time | Worst-Case Time | Auxiliary Space | Max Swaps | Stable? | Best Used For |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Bubble Sort** | $\mathcal{O}(N)$ (Optimized) | $\mathcal{O}(N^2)$ | $\mathcal{O}(N^2)$ | $\mathcal{O}(1)$ | $\mathcal{O}(N^2)$ | **Yes** | Educational concepts. |
-| **Selection Sort** | $\mathcal{O}(N^2)$ | $\mathcal{O}(N^2)$ | $\mathcal{O}(N^2)$ | $\mathcal{O}(1)$ | **$\mathcal{O}(N)$** | **No** | Minimizing physical memory writes. |
-| **Insertion Sort** | **$\mathcal{O}(N)$** | $\mathcal{O}(N^2)$ | $\mathcal{O}(N^2)$ | $\mathcal{O}(1)$ | $\mathcal{O}(N^2)$ | **Yes** | Small ($N \le 16$) or nearly-sorted datasets. |
-
----
-
-## 2. Algorithm Mechanics Visualizations
-
-### Bubble Sort Pass Mechanism
-Repeatedly compares adjacent pairs `arr[j]` and `arr[j+1]`, "bubbling" the largest unsorted element to the right end of the array.
+Sorting is the algorithmic re-ordering of elements according to a defined comparison relationship ($\le, \ge$). 
 
 ```mermaid
 flowchart TD
-    BubblePass[Outer Loop Pass i from N-1 down to 1] --> InitSwap[Set swapped = false]
-    InitSwap --> InnerLoop[Inner Loop j from 0 to i-1]
-
-    InnerLoop --> CheckAdj{Is arr[j] > arr[j+1]?}
-    CheckAdj -- Yes --> SwapPair[Swap arr[j] and arr[j+1]<br/>Set swapped = true]
-    CheckAdj -- No --> SkipSwap[No Swap]
-
-    SwapPair --> InnerNext[Advance j++]
-    SkipSwap --> InnerNext
-
-    InnerNext --> CheckInnerDone{Inner Loop Complete?}
-    CheckInnerDone -- No --> InnerLoop
-    CheckInnerDone -- Yes --> CheckEarlyExit{Is swapped == false?}
-
-    CheckEarlyExit -- Yes --> ArraySorted[EARLY EXIT: Array is already fully sorted!]
-    CheckEarlyExit -- No --> OuterNext[Decrement i--]
+    SortSpec[Sorting Algorithm Characteristics] --> Stability["1. Stability<br/>- Preserves relative order of duplicate elements<br/>- Essential for multi-key database sorts"]
+    
+    SortSpec --> SpaceType["2. In-Place Execution<br/>- Auxiliary Space is strictly O(1)<br/>- Modifies memory buffer directly"]
+    
+    SortSpec --> AdaptiveBehavior["3. Adaptive Performance<br/>- Algorithm runs faster on nearly-sorted data<br/>- Achieves O(n) best-case time"]
 ```
+
+### Real-World Engineering Context: Flipkart Catalog Sorting
+For a small product carousel (20 items), simpler $\mathcal{O}(n^2)$ algorithms like **Insertion Sort** out-perform complex divide-and-conquer algorithms due to zero recursion stack and low function call overhead. For full product search results (500,000 items), optimal $\mathcal{O}(n \log n)$ algorithms are mandatory.
 
 ---
 
-### Insertion Sort Mechanism
-Maintains a sorted sub-array on the left. Takes the next unsorted element and shifts larger elements to the right to insert it into its correct sorted slot.
+## 1. Algorithm Complexity & Attribute Matrix
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Subarray as Sorted Subarray [10, 30, 50]
-    participant Curr as Target Key = 20
-    participant Unsorted as Unsorted Portion [5]
-
-    Note over Subarray,Unsorted: Insert Key (20) into Sorted Subarray
-    Subarray->>Curr: Compare 50 > 20 -> Shift 50 right: [10, 30, _, 50]
-    Subarray->>Curr: Compare 30 > 20 -> Shift 30 right: [10, _, 30, 50]
-    Subarray->>Curr: Compare 10 < 20 -> Stop shifting!
-    Curr->>Subarray: Insert 20 into empty slot: [10, 20, 30, 50]
-```
+| Algorithm | Best Case Time | Average Case Time | Worst Case Time | Space Complexity | Stability | Adaptive | Key Advantage |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Bubble Sort** | **$\mathcal{O}(n)$** | $\mathcal{O}(n^2)$ | $\mathcal{O}(n^2)$ | $\mathcal{O}(1)$ in-place | **Yes** | **Yes** | Early exit flag detects sorted input. |
+| **Selection Sort** | $\mathcal{O}(n^2)$ | $\mathcal{O}(n^2)$ | $\mathcal{O}(n^2)$ | $\mathcal{O}(1)$ in-place | **No** | **No** | **$\mathcal{O}(n)$ total swaps** (ideal for high-cost writes). |
+| **Insertion Sort** | **$\mathcal{O}(n)$** | $\mathcal{O}(n^2)$ | $\mathcal{O}(n^2)$ | $\mathcal{O}(1)$ in-place | **Yes** | **Yes** | Ideal for small arrays ($n < 32$) and online streams. |
+| **JS `Array.prototype.sort`**| **$\mathcal{O}(n)$** | **$\mathcal{O}(n \log n)$**| **$\mathcal{O}(n \log n)$**| $\mathcal{O}(n)$ | **Yes** | **Yes** | Production hybrid TimSort engine. |
 
 ---
 
-## 3. Production Elementary Sorting Implementations
+## 2. Code Implementations & Mechanics Walkthrough
+
+### 1. Bubble Sort with Early Exit (`bubbleSort`)
+Compares adjacent pairs $[a_j, a_{j+1}]$ and swaps them if out of order. At the end of pass $i$, the largest unsorted element "bubbles up" to index $n - 1 - i$.
+- **Early-Exit Optimization**: If a pass completes with zero swaps (`swapped === false`), the array is already sorted, terminating execution in **$\mathcal{O}(n)$** time.
 
 ```javascript
-// 1. Optimized Bubble Sort with Early Exit - O(N²) Worst, O(N) Best
 function bubbleSort(arr) {
-  const n = arr.length;
-  let swapped;
-
-  for (let i = n - 1; i > 0; i--) {
-    swapped = false;
-    for (let j = 0; j < i; j++) {
-      if (arr[j] > arr[j + 1]) {
-        // Swap adjacent elements
-        const temp = arr[j];
-        arr[j] = arr[j + 1];
-        arr[j + 1] = temp;
+  const a = [...arr], n = a.length;
+  for (let i = 0; i < n - 1; i++) {
+    let swapped = false;
+    for (let j = 0; j < n - 1 - i; j++) {
+      if (a[j] > a[j + 1]) {
+        [a[j], a[j + 1]] = [a[j + 1], a[j]];
         swapped = true;
       }
     }
-    // If no swaps occurred during entire pass, array is already sorted!
-    if (!swapped) break;
+    if (!swapped) break; // Early exit on sorted input
   }
-  return arr;
+  return a;
 }
+```
 
-// 2. Selection Sort - O(N²) Comparisons, O(N) Swaps (Minimizes Array Writes)
+### 2. Selection Sort (`selectionSort`)
+Divides the array into sorted and unsorted regions. Repeatedly finds the minimum element in the unsorted region and swaps it to position $i$.
+- **Why Selection Sort is Unstable**: Swapping the minimum element across duplicate keys alters their original relative order (e.g., sorting `[3a, 3b, 1]` swaps `3a` with `1`, resulting in `[1, 3b, 3a]`).
+
+```javascript
 function selectionSort(arr) {
-  const n = arr.length;
-
+  const a = [...arr], n = a.length;
   for (let i = 0; i < n - 1; i++) {
-    let minIndex = i;
+    let minIdx = i;
     for (let j = i + 1; j < n; j++) {
-      if (arr[j] < arr[minIndex]) {
-        minIndex = j;
-      }
+      if (a[j] < a[minIdx]) minIdx = j;
     }
-    // Perform at most N swaps total
-    if (minIndex !== i) {
-      const temp = arr[i];
-      arr[i] = arr[minIndex];
-      arr[minIndex] = temp;
-    }
+    if (minIdx !== i) [a[i], a[minIdx]] = [a[minIdx], a[i]];
   }
-  return arr;
+  return a;
 }
+```
 
-// 3. Insertion Sort - O(N) Best Case for Nearly-Sorted Data
+### 3. Insertion Sort (`insertionSort`)
+Iterates through elements, inserting `arr[i]` into its correct position inside the sorted prefix `arr[0...i-1]` by shifting larger elements rightward.
+- **Rummy Cards Analogy**: Simulates arranging playing cards held in hand.
+- **TimSort Foundation**: Used as the base sub-algorithm inside V8's TimSort for array partitions of size $n \le 32$.
+
+```javascript
 function insertionSort(arr) {
-  const n = arr.length;
-
+  const a = [...arr], n = a.length;
   for (let i = 1; i < n; i++) {
-    const currentKey = arr[i];
+    const key = a[i];
     let j = i - 1;
-
-    // Shift elements of arr[0..i-1] that are greater than currentKey
-    while (j >= 0 && arr[j] > currentKey) {
-      arr[j + 1] = arr[j]; // Right shift
+    while (j >= 0 && a[j] > key) {
+      a[j + 1] = a[j]; // Shift right
       j--;
     }
-    arr[j + 1] = currentKey; // Place key in correct sorted position
+    a[j + 1] = key;
   }
-  return arr;
+  return a;
 }
-
-console.log("Insertion Sort Result:", insertionSort([64, 34, 25, 12, 22, 11, 90]));
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Practical JavaScript `Array.prototype.sort()` Gotchas
 
-1. **Use Insertion Sort for Nearly-Sorted or Small Arrays**: Insertion Sort achieves $\mathcal{O}(N)$ linear time when data is mostly sorted and minimal overhead on small arrays ($N \le 16$).
-2. **Understand Selection Sort Swap Minimization**: Selection Sort makes $\mathcal{O}(N^2)$ comparisons but strictly at most $\mathcal{O}(N)$ swaps. Useful when writing to memory is exceptionally expensive (e.g. Flash EEPROM).
-3. **Preserve Stability When Required**: When sorting multi-field data (e.g. sorting user records by First Name, then by Last Name), use stable algorithms (Insertion Sort, Merge Sort, Timsort) to avoid corrupting previous sort passes.
-4. **Avoid Naive Bubble Sort in Production**: Bubble Sort makes $\mathcal{O}(N^2)$ comparisons AND $\mathcal{O}(N^2)$ swaps, making it the least efficient elementary sort.
+### 1. Lexicographic Default Trap
+Without an explicit comparator callback, JavaScript converts array elements to strings and performs Unicode code-point comparison:
 
+```javascript
+const numbers = [10, 9, 80, 3, 21];
+
+// BAD: Default sort converts to strings ["10", "21", "3", "80", "9"]
+console.log(numbers.sort()); // Output: [10, 21, 3, 80, 9]
+
+// GOOD: Pass explicit numeric comparator function
+console.log(numbers.sort((a, b) => a - b)); // Output: [3, 9, 10, 21, 80]
+```
+
+### 2. Multi-Key Composite Sorting
+Sort products by rating descending, breaking ties by price ascending:
+
+```javascript
+const products = [
+  { name: "iPhone 15", price: 79999, rating: 4.5 },
+  { name: "Samsung S24", price: 69999, rating: 4.7 },
+  { name: "OnePlus 12", price: 49999, rating: 4.6 },
+  { name: "Pixel 8", price: 59999, rating: 4.8 },
+];
+
+const sorted = [...products].sort((a, b) => {
+  if (b.rating !== a.rating) return b.rating - a.rating; // Primary: Rating Descending
+  return a.price - b.price;                              // Secondary: Price Ascending
+});
+```
+
+---
+
+## 4. Algorithm Selection Decision Guide
+
+```mermaid
+flowchart TD
+    Start[Sorting Problem] --> SizeCheck{Is Input Size n < 32?}
+    SizeCheck -->|Yes| CheckOrder{Is Array Nearly Sorted?}
+    CheckOrder -->|Yes| UseInsert[Use Insertion Sort - O(n) Best Case]
+    CheckOrder -->|No| UseInsert
+    
+    SizeCheck -->|No| WriteCheck{Are Memory Writes Extremely Expensive?}
+    WriteCheck -->|Yes| UseSelect[Use Selection Sort - Exactly O(n) Swaps]
+    WriteCheck -->|No| UseV8Sort[Use Built-in JS sort - TimSort Engine]
+```
+
+---
+
+## Key Takeaways
+
+1. **Bubble Sort**: Simple, stable, adaptive with early exit flag ($\mathcal{O}(n)$ best case).
+2. **Selection Sort**: Unstable, but guarantees a maximum of **$n-1$ memory swaps** (useful for EEPROM / Flash memory writes).
+3. **Insertion Sort**: Best choice for small datasets ($n < 32$) and online data streams; powers TimSort base cases.
+4. **V8 `sort()` Rule**: Always supply `(a, b) => a - b` comparator callbacks for numerical sorting.

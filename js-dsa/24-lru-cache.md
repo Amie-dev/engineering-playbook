@@ -1,78 +1,53 @@
-# Module 24: LRU (Least Recently Used) Cache — System Architecture, Sentinel Nodes, and $\mathcal{O}(1)$ Eviction
+# Module 24: Least Recently Used (LRU) Cache Architecture
 
-## Overview
+## Theoretical Overview & Data Structure Architecture
 
-An **LRU (Least Recently Used) Cache** is a fixed-capacity memory cache data structure that evicts the least recently accessed item when full.
-
-Achieving **strict $\mathcal{O}(1)$ time complexity** for both `get(key)` and `put(key, value)` requires combining two complementary data structures:
-1. **Hash Map (`Map`)**: Provides $\mathcal{O}(1)$ key-to-node pointer lookup.
-2. **Doubly Linked List (`DLinkedList`)**: Provides $\mathcal{O}(1)$ node deletion and relocation to the Most Recently Used (MRU) head position without array re-indexing.
-
----
-
-## 1. Combined Data Structure Architecture
+An **LRU (Least Recently Used) Cache** is a fixed-capacity key-value storage container that automatically evicts the **least recently accessed** item when inserting a new key into a full cache.
 
 ```mermaid
-graph TD
-    subgraph Hash Map (O(1) Key-to-Node Memory Lookup)
-        Map1["Key: 'User1'"] --> NodePtr1["Pointer -> Node A"]
-        Map2["Key: 'User2'"] --> NodePtr2["Pointer -> Node B"]
-        Map3["Key: 'User3'"] --> NodePtr3["Pointer -> Node C"]
+flowchart LR
+    subgraph Doubly Linked List MRU to LRU Order
+        Head["Sentinel Head Node (MRU Side)"] <--> Node1["Key 3: 'Dominos'"]
+        Node1 <--> Node2["Key 1: 'Biryani'"]
+        Node2 <--> Node3["Key 4: 'KFC'"]
+        Node3 <--> Tail["Sentinel Tail Node (LRU Side)"]
     end
 
-    subgraph Doubly Linked List (O(1) Recency Ordering)
-        DummyHead["Dummy HEAD<br/>(Sentinel Node)"] <--> NodeA["Node A<br/>['User1': Data] (MRU)"]
-        NodeA <--> NodeB["Node B<br/>['User2': Data]"]
-        NodeB <--> NodeC["Node C<br/>['User3': Data] (LRU)"]
-        NodeC <--> DummyTail["Dummy TAIL<br/>(Sentinel Node)"]
+    subgraph Hash Map Lookup (O(1))
+        Map["Map: Key -> Node Pointer"] --> Node1
+        Map --> Node2
+        Map --> Node3
     end
 ```
 
----
+### Why Combine a Hash Map and a Doubly Linked List?
+To achieve **$\mathcal{O}(1)$ time complexity** for both `get(key)` and `put(key, value)`:
+1. **Hash Map**: Maps `key` $\to$ `ListNode Pointer` in $\mathcal{O}(1)$ time, eliminating linear searches.
+2. **Doubly Linked List**: Re-links node pointers in $\mathcal{O}(1)$ time when moving accessed nodes to the **Most Recently Used (MRU)** front or evicting the **Least Recently Used (LRU)** tail node.
 
-## 2. LRU Node Operations & Recency State Transitions
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Client as Application API
-    participant Map as Hash Map
-    participant DLL as Doubly Linked List (MRU Head <-> LRU Tail)
-
-    Note over Client,DLL: CASE 1: get("User2") Cache Hit
-    Client->>Map: Lookup "User2" -> Returns Node B Pointer
-    Map->>DLL: Detach Node B from middle: prev.next = next, next.prev = prev
-    DLL->>DLL: Move Node B to MRU position right after Dummy Head!
-    DLL-->>Client: Returns Node B Payload (Cache Hit in O(1) Time)
-
-    Note over Client,DLL: CASE 2: put("User4", val) when Cache Full
-    Client->>DLL: Create Node D -> Add right after Dummy Head (MRU)
-    Map->>Client: Insert "User4" -> Node D into Hash Map
-    DLL->>DLL: Evict LRU Node (Node C right before Dummy Tail)
-    DLL->>Map: Delete "User3" key from Hash Map!
-```
+> [!IMPORTANT]
+> **Sentinel Node Optimization**: Using dummy `head` and `tail` sentinel nodes eliminates boundary null-pointer checks during node insertions and deletions.
 
 ---
 
-## 3. Operations Complexity & Implementation Comparison
+## 1. Cache Eviction Policies Comparison Matrix
 
-| Implementation Approach | `get(key)` Time | `put(key, val)` Time | Memory Overhead | Practical Suitability |
-| :--- | :--- | :--- | :--- | :--- |
-| **Array + Hash Map** | $\mathcal{O}(1)$ | **$\mathcal{O}(N)$** (Array shift) | Low | Not recommended due to $\mathcal{O}(N)$ eviction. |
-| **Map + Doubly Linked List** | **$\mathcal{O}(1)$** | **$\mathcal{O}(1)$** | Medium (Pointer objects) | **Production Gold Standard** (C++, Java, JS). |
-| **Native ES6 `Map` Trick** | **$\mathcal{O}(1)$** | **$\mathcal{O}(1)$** | Low | Compact JS-specific implementation. |
+| Eviction Policy | Full Name | Eviction Criterion | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| **LRU** | Least Recently Used | Evicts items whose **last access timestamp** is oldest. | General-purpose web/DB caches (Swiggy, Redis, CDNs). |
+| **LFU** | Least Frequently Used | Evicts items with the **lowest total hit frequency**. | Heavy CDN media streaming, long-tail content. |
+| **FIFO** | First In, First Out | Evicts items in order of **initial insertion timestamp**. | Message brokers, packet buffers. |
+| **TTL** | Time to Live | Evicts items whose **expiration timer** has lapsed. | Auth sessions, DNS resolution caches. |
 
 ---
 
-## 4. Production Code Implementations
-
-### Implementation 1: Hash Map + Doubly Linked List (Sentinel Node Pattern)
+## 2. Production-Grade LRU Cache Implementation
 
 ```javascript
-class DNode {
-  constructor(key = 0, val = 0) {
+class DoublyLinkedListNode {
+  constructor(key, value) {
     this.key = key;
-    this.val = val;
+    this.value = value;
     this.prev = null;
     this.next = null;
   }
@@ -81,111 +56,109 @@ class DNode {
 class LRUCache {
   constructor(capacity) {
     this.capacity = capacity;
-    this.map = new Map(); // Key -> DNode reference
-
-    // Sentinel Dummy Head & Tail Nodes (Eliminates null checks!)
-    this.head = new DNode();
-    this.tail = new DNode();
+    this.map = new Map();
+    // Dummy sentinel nodes eliminate null pointer checks
+    this.head = new DoublyLinkedListNode(0, 0);
+    this.tail = new DoublyLinkedListNode(0, 0);
     this.head.next = this.tail;
     this.tail.prev = this.head;
   }
 
-  // Helper 1: Detach node from current position in O(1) time
-  _remove(node) {
+  _removeNode(node) {
     node.prev.next = node.next;
     node.next.prev = node.prev;
   }
 
-  // Helper 2: Insert node at MRU position (right after dummy head) in O(1) time
-  _add(node) {
-    node.next = this.head.next;
-    node.next.prev = node;
-    this.head.next = node;
+  _addToFront(node) {
     node.prev = this.head;
+    node.next = this.head.next;
+    this.head.next.prev = node;
+    this.head.next = node;
   }
 
-  // O(1) Time Cache Read
+  _moveToFront(node) {
+    this._removeNode(node);
+    this._addToFront(node);
+  }
+
   get(key) {
     if (!this.map.has(key)) return -1;
-
     const node = this.map.get(key);
-    this._remove(node); // Detach from current position
-    this._add(node);    // Move to MRU head
-    return node.val;
-  }
-
-  // O(1) Time Cache Write & Eviction
-  put(key, value) {
-    if (this.map.has(key)) {
-      this._remove(this.map.get(key)); // Remove existing node
-    }
-
-    const newNode = new DNode(key, value);
-    this._add(newNode);
-    this.map.set(key, newNode);
-
-    // Evict Least Recently Used (LRU) node if capacity exceeded
-    if (this.map.size > this.capacity) {
-      const lruNode = this.tail.prev; // Node right before dummy tail
-      this._remove(lruNode);
-      this.map.delete(lruNode.key);   // Remove key from hash map
-    }
-  }
-}
-```
-
-### Implementation 2: Native ES6 `Map` Shortcut (JS Engine Feature)
-
-Because ES6 `Map` iterates keys in **insertion order**, we can achieve an LRU Cache by deleting and re-setting keys upon access:
-
-```javascript
-class CompactLRUCache {
-  constructor(capacity) {
-    this.capacity = capacity;
-    this.map = new Map();
-  }
-
-  get(key) {
-    if (!this.map.has(key)) return -1;
-
-    const val = this.map.get(key);
-    this.map.delete(key);
-    this.map.set(key, val); // Re-inserting moves key to end (MRU)
-    return val;
+    this._moveToFront(node);
+    return node.value;
   }
 
   put(key, value) {
     if (this.map.has(key)) {
-      this.map.delete(key);
-    }
-
-    this.map.set(key, value);
-
-    if (this.map.size > this.capacity) {
-      // First key in Map iterator is Least Recently Used (LRU)!
-      const lruKey = this.map.keys().next().value;
-      this.map.delete(lruKey);
+      const node = this.map.get(key);
+      node.value = value;
+      this._moveToFront(node);
+    } else {
+      const newNode = new DoublyLinkedListNode(key, value);
+      this.map.set(key, newNode);
+      this._addToFront(newNode);
+      if (this.map.size > this.capacity) {
+        const lruNode = this.tail.prev;
+        this._removeNode(lruNode);
+        this.map.delete(lruNode.key);
+      }
     }
   }
 }
-
-// Verification
-const cache = new LRUCache(2);
-cache.put(1, 100);
-cache.put(2, 200);
-console.log("Get Key 1 :", cache.get(1)); // 100 (Key 1 becomes MRU)
-
-cache.put(3, 300); // Evicts Key 2 (LRU)!
-console.log("Get Key 2 :", cache.get(2)); // -1 (Evicted)
-console.log("Get Key 3 :", cache.get(3)); // 300
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Simplified ES6 `Map` LRU Implementation
 
-1. **Use Sentinel Dummy Head & Tail Nodes**: Dummy sentinel nodes eliminate edge-case checks for empty lists or single-element boundary updates in doubly linked lists.
-2. **Always Store `key` Inside `DNode`**: Store both `key` and `val` inside the node payload so when evicting `lruNode = tail.prev`, you can retrieve `lruNode.key` to delete it from the Hash Map in $\mathcal{O}(1)$ time.
-3. **Exploit ES6 `Map` Insertion Order in JavaScript**: In JS applications, standard ES6 `Map` maintains insertion order natively. Calling `map.delete(key); map.set(key, val);` achieves $\mathcal{O}(1)$ recency updates with zero custom node allocation.
-4. **Essential Infrastructure Data Structure**: LRU caching underpins Redis cache eviction policies, database buffer pools, and browser HTTP cache stores.
+JavaScript ES6 `Map` guarantees key insertion ordering. Deleting and re-setting an existing key moves it to the end (MRU), while `map.keys().next().value` yields the oldest key (LRU).
 
+```javascript
+class LRUCacheSimple {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+  }
+
+  get(key) {
+    if (!this.cache.has(key)) return -1;
+    const value = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, value); // Move to back (MRU)
+    return value;
+  }
+
+  put(key, value) {
+    if (this.cache.has(key)) this.cache.delete(key);
+    this.cache.set(key, value);
+    if (this.cache.size > this.capacity) {
+      const lruKey = this.cache.keys().next().value;
+      this.cache.delete(lruKey); // Evict front (LRU)
+    }
+  }
+}
+```
+
+---
+
+## 4. Step-by-Step State Transition Walkthrough
+
+Consider a cache of **`capacity = 3`**:
+
+| Operation | Action Taken | Cache State (MRU $\to$ LRU) | Evicted Key | Output |
+| :--- | :--- | :--- | :--- | :--- |
+| `put(1, "Biryani")` | Add key 1 | `[1:Biryani]` | None | - |
+| `put(2, "Pizza")` | Add key 2 | `[2:Pizza <-> 1:Biryani]` | None | - |
+| `put(3, "Dominos")`| Add key 3 | `[3:Dominos <-> 2:Pizza <-> 1:Biryani]` | None | - |
+| `get(1)` | Access key 1 $\to$ Move to MRU | `[1:Biryani <-> 3:Dominos <-> 2:Pizza]` | None | `"Biryani"` |
+| `put(4, "KFC")` | Add key 4 $\to$ Capacity exceeded | `[4:KFC <-> 1:Biryani <-> 3:Dominos]` | **Key 2** | - |
+| `get(2)` | Search key 2 | `[4:KFC <-> 1:Biryani <-> 3:Dominos]` | None | `-1` (Evicted) |
+
+---
+
+## Key Takeaways
+
+1. **Dual Data Structure Requirement**: Combine a Hash Map (for $\mathcal{O}(1)$ key lookup) with a Doubly Linked List (for $\mathcal{O}(1)$ node pointer adjustments).
+2. **Key Storage in Node**: Each node must store both `key` and `value` so that when the LRU tail node is evicted, its corresponding key can be deleted from the Hash Map in $\mathcal{O}(1)$ time.
+3. **Sentinel Nodes**: Dummy `head` and `tail` nodes eliminate edge case checks when updating list boundaries.
+4. **Production Use Cases**: Powers web browser caches, Redis eviction policies, OS page table replacement, and CDN edge node caching.

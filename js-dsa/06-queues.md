@@ -1,160 +1,241 @@
-# Module 06: Queues, Circular Ring Buffers, and Monotonic Deques
+# Module 06: Queues, Circular Buffers, Deques, and Priority Queues
 
-## Overview
+## Theoretical Overview & Structural Mechanics
 
-A **Queue** is a linear data structure governed by the **FIFO (First-In, First-Out)** behavioral principle. The first element enqueued into the structure is guaranteed to be the first element dequeued.
-
-In Node.js and browser runtimes, queues drive the **Event Loop** (Microtask Queue vs Macrotask Queue). In algorithm design, queues power **Breadth-First Search (BFS)** graph traversals, fixed-capacity **Circular Ring Buffers**, and **Monotonic Deques** for sliding window calculations.
-
----
-
-## 1. Queue Architectures: Array vs. Circular Ring Buffer vs. Deque
+A **Queue** is a linear data structure following the **FIFO (First In, First Out)** principle. The first element added (enqueued) to the queue is the first element removed (dequeued).
 
 ```mermaid
-flowchart TD
-    subgraph Standard FIFO Queue
-        Enq["enqueue(val) at Rear"] --> RearPtr["[Item 3, Item 2, Item 1]"] --> Deq["dequeue() at Front"]
-    end
-
-    subgraph Circular Ring Buffer
-        Ring["Fixed Array Buffer [0..K-1]"]
-        Head["head = (head + 1) % K"]
-        Tail["tail = (tail + 1) % K"]
-        Ring --> Head
-        Ring --> Tail
-    end
-
-    subgraph Double-Ended Queue (Deque)
-        FrontOps["pushFront() / popFront()"] <--> DoubleEnd["[Front <-> Node 1 <-> Node 2 <-> Rear]"] <--> RearOps["pushBack() / popBack()"]
+flowchart LR
+    subgraph FIFO Queue Architecture
+        Enqueue["Enqueue (Rear)"] --> Rear["Item 3 (Rear)"]
+        Rear --> Middle["Item 2"]
+        Middle --> Head["Item 1 (Head)"]
+        Head --> Dequeue["Dequeue (Head)"]
     end
 ```
 
-### Queue Implementation Performance Comparison
-
-| Implementation Strategy | Enqueue Time | Dequeue Time | Space Overhead | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Array.prototype.shift()`** | $\mathcal{O}(1)$ | **$\mathcal{O}(N)$** | Low | **DO NOT USE**: `shift()` re-indexes all $N$ elements in memory. |
-| **Object Hash Pointer (`head`/`tail`)** | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Medium | Keys accumulate; requires `delete` object property operations. |
-| **Doubly Linked List** | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | High | Pointer object memory overhead. |
-| **Circular Ring Buffer** | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | **Zero GC** | Best performance; pre-allocated fixed memory array. |
+### Real-World Engineering Analogies
+1. **Ola Ride Dispatch Engine**: Incoming passenger ride requests are placed in a FIFO queue. Drivers are assigned to the oldest request in the queue first.
+2. **Web Server Request Queue**: Node.js Event Loop and HTTP connection pools use FIFO queues to process incoming requests fairly.
 
 ---
 
-## 2. Circular Ring Buffer Implementation Code
+## 1. Queue Variations Complexity Comparison Matrix
 
-A **Circular Queue** reuses freed slots at the front of a fixed-size array using modulo arithmetic:
+| Data Structure | Enqueue / Insert | Dequeue / Delete | Peek / Front | Memory Allocation | Best Use Case |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Array Queue** | $\mathcal{O}(1)$ amortized | **$\mathcal{O}(n)$** (Flawed) | $\mathcal{O}(1)$ | Dynamic Array | Simple prototypes, tiny $n$. |
+| **Linked-List Queue** | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Dynamic Nodes | General-purpose FIFO queue. |
+| **Circular Queue** | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ | Fixed Array Buffer | High-throughput bounded ring buffers. |
+| **Deque (Double-Ended)** | $\mathcal{O}(1)$ (Both ends) | $\mathcal{O}(1)$ (Both ends) | $\mathcal{O}(1)$ | Doubly-Linked List | Sliding Window Maximum, Monotonic Queue. |
+| **Array Priority Queue** | $\mathcal{O}(1)$ | **$\mathcal{O}(n)$** scan | $\mathcal{O}(n)$ | Dynamic Array | Tiny priority queues ($n \le 50$). |
+| **Heap Priority Queue** | $\mathcal{O}(\log n)$ | $\mathcal{O}(\log n)$ | $\mathcal{O}(1)$ | Binary Heap Array | Dijkstra's algorithm, Task Schedulers. |
+
+> [!WARNING]
+> **The JS Array Shift Flaw**: In JavaScript, invoking `.shift()` on an array removes `arr[0]` and forces V8 to re-index all remaining elements leftward by -1, making array dequeue an **$\mathcal{O}(n)$ bottleneck**. Always use a `LinkedListQueue` or pointer-based structure for high-performance queues.
+
+---
+
+## 2. Core Code Implementations
+
+### 1. Optimal Linked-List Queue (`LinkedListQueue`)
+Achieves $\mathcal{O}(1)$ time for both `enqueue` and `dequeue` by maintaining `head` and `tail` node pointers.
+
+```javascript
+class QueueNode {
+  constructor(value) { this.value = value; this.next = null; }
+}
+
+class LinkedListQueue {
+  constructor() { this.head = null; this.tail = null; this._size = 0; }
+
+  enqueue(value) {
+    const node = new QueueNode(value);
+    if (this.isEmpty()) { this.head = node; this.tail = node; }
+    else { this.tail.next = node; this.tail = node; }
+    this._size++;
+  }
+
+  dequeue() {
+    if (this.isEmpty()) return undefined;
+    const val = this.head.value;
+    this.head = this.head.next;
+    if (!this.head) this.tail = null;
+    this._size--;
+    return val;
+  }
+
+  front() { return this.isEmpty() ? undefined : this.head.value; }
+  isEmpty() { return this._size === 0; }
+  size() { return this._size; }
+}
+```
+
+### 2. Circular Buffer Queue (`CircularQueue`)
+Uses modulo pointer arithmetic `index = (index + 1) % capacity` on a pre-allocated array of fixed capacity to eliminate garbage collection allocations.
 
 ```javascript
 class CircularQueue {
   constructor(capacity) {
-    this.buffer = new Array(capacity);
     this.capacity = capacity;
-    this.head = 0;
-    this.tail = 0;
-    this.size = 0;
+    this.items = new Array(capacity);
+    this.headIdx = 0; this.tailIdx = 0; this._size = 0;
   }
 
-  enqueue(element) {
-    if (this.isFull()) {
-      throw new Error("Queue Overflow: Circular Ring Buffer is full!");
-    }
-
-    this.buffer[this.tail] = element;
-    this.tail = (this.tail + 1) % this.capacity; // Modulo wrap-around
-    this.size++;
-    return true;
+  enqueue(value) {
+    if (this.isFull()) return false;
+    this.items[this.tailIdx] = value;
+    this.tailIdx = (this.tailIdx + 1) % this.capacity;
+    this._size++; return true;
   }
 
   dequeue() {
-    if (this.isEmpty()) return null;
-
-    const item = this.buffer[this.head];
-    this.buffer[this.head] = undefined; // Garbage collection hint
-    this.head = (this.head + 1) % this.capacity; // Modulo wrap-around
-    this.size--;
-    return item;
+    if (this.isEmpty()) return undefined;
+    const val = this.items[this.headIdx];
+    this.headIdx = (this.headIdx + 1) % this.capacity;
+    this._size--; return val;
   }
 
-  peek() {
-    if (this.isEmpty()) return null;
-    return this.buffer[this.head];
-  }
-
-  isEmpty() { return this.size === 0; }
-  isFull() { return this.size === this.capacity; }
+  isFull() { return this._size === this.capacity; }
+  isEmpty() { return this._size === 0; }
 }
 ```
 
----
-
-## 3. Algorithmic Pattern: Monotonic Deque (Sliding Window Maximum)
-
-A **Monotonic Deque** maintains indices of elements in strictly decreasing value order, solving the **Sliding Window Maximum** problem in **$\mathcal{O}(N)$ time**.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Array as Input Array [1, 3, -1, -3, 5, 3, 6, 7], k = 3
-    participant Deque as Monotonic Deque (Stores Indices)
-    participant Result as Output Array
-
-    Array->>Deque: Process i = 0 (val = 1): Push index 0
-    Array->>Deque: Process i = 1 (val = 3): 3 > 1! Pop index 0, Push index 1
-    Array->>Deque: Process i = 2 (val = -1): Push index 2
-    Note over Deque: Window [1, 3, -1] complete! Max = arr[Deque.front] = 3
-    Deque-->>Result: Append 3
-
-    Array->>Deque: Process i = 3 (val = -3): Push index 3
-    Note over Deque: Window [3, -1, -3] complete! Max = arr[Deque.front] = 3
-    Deque-->>Result: Append 3
-
-    Array->>Deque: Process i = 4 (val = 5): 5 > -3, -1, 3! Pop all, Push index 4
-    Deque-->>Result: Append 5
-```
-
-### Sliding Window Maximum Code Implementation
+### 3. Double-Ended Queue (`Deque`)
+Supports insertion and removal from both front and rear boundaries in $\mathcal{O}(1)$ time using a Doubly Linked List.
 
 ```javascript
-// Solves Sliding Window Maximum in O(N) Time and O(K) Space using Monotonic Deque
-function maxSlidingWindow(nums, k) {
-  const n = nums.length;
-  if (n === 0 || k === 0) return [];
-
-  const result = [];
-  const deque = []; // Stores array indices
-
-  for (let i = 0; i < n; i++) {
-    // 1. Remove indices that fall outside current sliding window [i - k + 1, i]
-    if (deque.length > 0 && deque[0] <= i - k) {
-      deque.shift();
-    }
-
-    // 2. Maintain Monotonic Decreasing Order: Remove smaller values from back
-    while (deque.length > 0 && nums[deque[deque.length - 1]] <= nums[i]) {
-      deque.pop();
-    }
-
-    // 3. Push current element index
-    deque.push(i);
-
-    // 4. Append max element (front of deque) to result once window reaches size k
-    if (i >= k - 1) {
-      result.push(nums[deque[0]]);
-    }
-  }
-
-  return result;
+class DequeNode {
+  constructor(value) { this.value = value; this.next = null; this.prev = null; }
 }
 
-console.log(maxSlidingWindow([1, 3, -1, -3, 5, 3, 6, 7], 3)); // Output: [3, 3, 5, 5, 6, 7]
+class Deque {
+  constructor() { this.head = null; this.tail = null; this._size = 0; }
+
+  addFront(value) {
+    const node = new DequeNode(value);
+    if (this.isEmpty()) { this.head = node; this.tail = node; }
+    else { node.next = this.head; this.head.prev = node; this.head = node; }
+    this._size++;
+  }
+
+  addRear(value) {
+    const node = new DequeNode(value);
+    if (this.isEmpty()) { this.head = node; this.tail = node; }
+    else { node.prev = this.tail; this.tail.next = node; this.tail = node; }
+    this._size++;
+  }
+
+  removeFront() {
+    if (this.isEmpty()) return undefined;
+    const val = this.head.value;
+    this.head = this.head.next;
+    this.head ? (this.head.prev = null) : (this.tail = null);
+    this._size--; return val;
+  }
+
+  removeRear() {
+    if (this.isEmpty()) return undefined;
+    const val = this.tail.value;
+    this.tail = this.tail.prev;
+    this.tail ? (this.tail.next = null) : (this.head = null);
+    this._size--; return val;
+  }
+
+  isEmpty() { return this._size === 0; }
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Practical Algorithmic Applications
 
-1. **NEVER Use `Array.prototype.shift()` for Queues**: `shift()` shifts every single array item left, converting an $\mathcal{O}(1)$ operation into $\mathcal{O}(N)$ linear decay.
-2. **Use Circular Ring Buffers for High-Throughput I/O**: For streaming buffers or network packet handlers, use a circular array buffer to eliminate V8 garbage collection churn.
-3. **Use Queues for Breadth-First Search (BFS)**: BFS algorithms rely on queues to explore graph levels in shortest-path order.
-4. **Master the Monotonic Deque for Sliding Window Max/Min**: When asked for running maximums or minimums over dynamic sliding intervals, a monotonic deque delivers optimal $\mathcal{O}(N)$ runtime.
+### 1. Generating Binary Numbers 1 to N (`generateBinaryNumbers`)
+Generate binary representations from 1 to $N$ in string form using BFS Queue expansion.
+- **Strategy**: Enqueue `"1"`. On each step, dequeue string `curr`, record it, and enqueue `curr + "0"` and `curr + "1"`.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
 
+```javascript
+function generateBinaryNumbers(n) {
+  const result = [], queue = new LinkedListQueue();
+  queue.enqueue("1");
+  for (let i = 0; i < n; i++) {
+    const curr = queue.dequeue();
+    result.push(curr);
+    queue.enqueue(curr + "0");
+    queue.enqueue(curr + "1");
+  }
+  return result;
+}
+```
+
+### 2. First Non-Repeating Character in Data Stream (`firstNonRepeating`)
+Find the first unique character in a stream as characters arrive in real-time.
+- **Strategy**: Combine a Queue with a character frequency map. Pop front elements whose frequency count exceeds 1.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(k)$.
+
+```javascript
+function firstNonRepeating(stream) {
+  const freq = {}, queue = new ArrayQueue(), results = [];
+  for (const ch of stream) {
+    freq[ch] = (freq[ch] || 0) + 1;
+    queue.enqueue(ch);
+    while (!queue.isEmpty() && freq[queue.front()] > 1) queue.dequeue();
+    results.push(queue.isEmpty() ? null : queue.front());
+  }
+  return results;
+}
+```
+
+### 3. Ring Buffer Log Telemetry (`RingBuffer`)
+A circular ring buffer that continuously overwrites the oldest element when full. Ideal for CCTV video feeds, logging buffers, and high-frequency metric collection.
+
+```javascript
+class RingBuffer {
+  constructor(cap) {
+    this.cap = cap; this.items = new Array(cap).fill(null);
+    this.writeIdx = 0; this._count = 0;
+  }
+  write(value) {
+    this.items[this.writeIdx] = value;
+    this.writeIdx = (this.writeIdx + 1) % this.cap;
+    this._count++;
+  }
+  readAll() {
+    if (this._count < this.cap) return this.items.slice(0, this._count);
+    const r = [];
+    for (let i = 0; i < this.cap; i++) r.push(this.items[(this.writeIdx + i) % this.cap]);
+    return r;
+  }
+}
+```
+
+### 4. Graph Breadth-First Search (`bfsPreview`)
+Breadth-First Search visits nodes level-by-level using a FIFO queue.
+
+```javascript
+function bfsPreview(graph, start) {
+  const visited = new Set(), queue = new LinkedListQueue(), order = [];
+  queue.enqueue(start); visited.add(start);
+  while (!queue.isEmpty()) {
+    const node = queue.dequeue();
+    order.push(node);
+    for (const neighbor of (graph[node] || [])) {
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.enqueue(neighbor);
+      }
+    }
+  }
+  return order;
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Avoid JS Array `.shift()`**: Shift operates in $\mathcal{O}(n)$ time. Use Linked-List Queue for true $\mathcal{O}(1)$ operations.
+2. **Circular Buffer**: Perfect for fixed capacity streams, eliminating dynamic memory reallocation.
+3. **Deques**: Generalize stacks and queues, powering Sliding Window Maximum algorithms.
+4. **BFS Traversal Engine**: Queues power Breadth-First Search, network packet routers, and task job runners.

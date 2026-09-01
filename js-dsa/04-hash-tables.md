@@ -1,182 +1,235 @@
-# Module 04: Hash Tables, Collision Resolution Strategies, and V8 `Map` / `Set` Internals
+# Module 04: Hash Tables, Collisions, and Map/Set Internals
 
-## Overview
+## Theoretical Overview & Mathematical Foundations
 
-A **Hash Table** (or Hash Map) is a foundational data structure offering **$\mathcal{O}(1)$ average time complexity** for insertion, lookup, and deletion.
+A **Hash Table** (or Hash Map) is a data structure that pairs keys to values using a mathematical **Hash Function**. It provides near-instantaneous **$\mathcal{O}(1)$ average time complexity** for insertion, lookup, and deletion operations regardless of whether the dataset contains 10 elements or 1.4 billion records (such as the Aadhaar identity registry).
 
-It transforms arbitrary keys (strings, numbers, objects) into discrete integer array indices via a **Deterministic Hash Function**. When two keys hash to the same bucket index (**Hash Collision**), resolution techniques like **Separate Chaining** or **Open Addressing** maintain structure integrity.
+```mermaid
+flowchart LR
+    Key["Key: '345678901234'"] --> HashFn["Hash Function: hash(Key) % Capacity"]
+    HashFn --> Index["Index: 7"]
+    Index --> Buckets["Buckets Array"]
+    Buckets --> Slot7["Slot 7: ['345678901234', 'Rahul Verma']"]
+```
+
+### The Hash Function & Prime Multiplier 31
+A hash function maps arbitrary keys (strings, objects) to integer indices within fixed capacity bounds $[0, \text{capacity} - 1]$. 
+
+$$\text{Hash}(K) = \left( \sum_{i=0}^{L-1} S[i] \times 31^{L-1-i} \right) \bmod \text{Capacity}$$
+
+The prime multiplier **31** is chosen because:
+1. It is an odd prime, reducing hash collisions across ASCII/Unicode distributions.
+2. Modern compilers convert $31 \times i$ into efficient bitwise shifts: `(i << 5) - i`.
 
 ---
 
-## 1. Hash Table Collision Resolution Strategies
+## 1. Collision Resolution Strategies
+
+When two distinct keys yield identical bucket indices ($\text{Hash}(K_1) = \text{Hash}(K_2)$), a **collision** occurs.
 
 ```mermaid
 flowchart TD
-    CollisionStrategy[Collision Resolution Strategies] --> Chaining["1. Separate Chaining<br/>- Each bucket stores a Linked List / Array of key-value pairs<br/>- Handles infinite collisions gracefully<br/>- Requires extra pointer memory"]
-
-    CollisionStrategy --> OpenAddressing["2. Open Addressing<br/>- All items stored directly inside main bucket array<br/>- Finds alternative empty slot when collision occurs<br/>- Memory efficient (No pointers)"]
-
-    OpenAddressing --> LinearProbing["Linear Probing: Probe (i + 1), (i + 2)..."]
-    OpenAddressing --> QuadProbing["Quadratic Probing: Probe (i + 1²), (i + 2²)..."]
-    OpenAddressing --> DoubleHashing["Double Hashing: Hash2(key) step multiplier"]
+    CollisionStrategy[Collision Resolution Methods] --> Chaining["1. Separate Chaining<br/>- Each bucket holds a array/list of entries<br/>- Infinite capacity per slot<br/>- V8 Map internal mechanism"]
+    CollisionStrategy --> OpenAddressing["2. Open Addressing (Linear Probing)<br/>- Traverses to next open slot: index = (index + 1) % capacity<br/>- High spatial locality<br/>- Prone to primary clustering"]
 ```
 
-### Chaining vs. Open Addressing Architecture
+### Load Factor & Dynamic Reshashing
+The **Load Factor** $\alpha$ measures table saturation:
 
-```mermaid
-graph TD
-    subgraph Separate Chaining (Linked List Buckets)
-        Bucket0["Index 0"] --> Null0[null]
-        Bucket1["Index 1"] --> NodeA1["['cat': 10]"] --> NodeA2["['act': 42] (Collision Chaining)"]
-        Bucket2["Index 2"] --> NodeB1["['dog': 99]"]
-    end
+$$\alpha = \frac{\text{Number of Stored Entries } (N)}{\text{Bucket Array Capacity } (C)}$$
 
-    subgraph Open Addressing (Linear Probing)
-        Slot0["[0]: null"]
-        Slot1["[1]: ['cat': 10]"]
-        Slot2["[2]: ['act': 42] (Probed to next open slot!)"]
-        Slot3["[3]: ['dog': 99]"]
-    end
-```
+- **Threshold**: When $\alpha > 0.75$, collision rates spike sharply.
+- **Reshashing**: The table doubles its array capacity ($C \to 2C$) and re-keys every existing entry. Dynamic resizing takes **$\mathcal{O}(N)$** time, amortized to **$\mathcal{O}(1)$** per insert.
 
 ---
 
-## 2. Load Factor ($\alpha$) and Dynamic Rehashing
+## 2. Code Implementation: Chaining vs Linear Probing
 
-The **Load Factor ($\alpha$)** represents the ratio of occupied entries to total bucket array capacity:
-
-$$\alpha = \frac{\text{Number of Stored Key-Value Pairs } (N)}{\text{Total Bucket Capacity } (K)}$$
-
-- **Threshold Guard**: When $\alpha > 0.75$, collisions increase rapidly, causing operations to degrade from $\mathcal{O}(1)$ toward $\mathcal{O}(N)$.
-- **Dynamic Resizing**: When the load factor threshold is breached, the hash table allocates a new array of **$2\times$ capacity** and recalculates hash indices for all existing elements (**Rehashing**).
-
----
-
-## 3. V8 Engine `Map` and `Set` Internals: Ordered Hash Table
-
-In standard JavaScript objects (`{}`), keys are converted to strings, and key enumeration order can be unpredictable.
-
-ES6 **`Map`** and **`Set`** preserve **insertion order** during iteration. V8 implements `Map` using a **Deterministic Ordered HashTable** composed of two flat arrays:
-
-1. **HashTable Index Bucket Array**: Maps hash codes to data array entry indices.
-2. **Data Storage Array**: Sequential array of entries preserving insertion order `[Key, Value]`.
-
----
-
-## 4. Custom Hash Table Implementation with Chaining & Dynamic Resizing
-
+### Separate Chaining Implementation (`HashTable`)
 ```javascript
-class HighPerformanceHashTable {
-  constructor(initialCapacity = 16, loadFactorLimit = 0.75) {
-    this.buckets = new Array(initialCapacity);
+class HashTable {
+  constructor(initialSize = 16) {
+    this.buckets = new Array(initialSize).fill(null).map(() => []);
     this.size = 0;
-    this.capacity = initialCapacity;
-    this.loadFactorLimit = loadFactorLimit;
+    this.capacity = initialSize;
   }
 
-  // Polynomial Rolling Hash Function (DJB2 Variant)
   _hash(key) {
-    const keyStr = String(key);
-    let hash = 5381;
-
-    for (let i = 0; i < keyStr.length; i++) {
-      hash = (hash * 33) ^ keyStr.charCodeAt(i);
-    }
-
-    return (hash >>> 0) % this.capacity; // Unsigned bitwise right shift
+    let hash = 0;
+    const str = String(key);
+    for (let i = 0; i < str.length; i++)
+      hash = (hash * 31 + str.charCodeAt(i)) % this.capacity;
+    return hash;
   }
 
   set(key, value) {
-    // Check if dynamic resize is required before inserting
-    if (this.size / this.capacity >= this.loadFactorLimit) {
-      this._resize(this.capacity * 2);
-    }
-
-    const index = this._hash(key);
-    if (!this.buckets[index]) {
-      this.buckets[index] = [];
-    }
-
-    const bucket = this.buckets[index];
-
-    // Update value if key already exists
+    if (this.size / this.capacity > 0.75) this._resize();
+    const bucket = this.buckets[this._hash(key)];
     for (let i = 0; i < bucket.length; i++) {
-      if (bucket[i][0] === key) {
-        bucket[i][1] = value;
-        return;
-      }
+      if (bucket[i][0] === key) { bucket[i][1] = value; return; }
     }
-
-    // Insert new pair
     bucket.push([key, value]);
     this.size++;
   }
 
   get(key) {
-    const index = this._hash(key);
-    const bucket = this.buckets[index];
-
-    if (bucket) {
-      for (let i = 0; i < bucket.length; i++) {
-        if (bucket[i][0] === key) return bucket[i][1];
-      }
-    }
-
-    return undefined; // Key not found
+    const bucket = this.buckets[this._hash(key)];
+    for (const [k, v] of bucket) if (k === key) return v;
+    return undefined;
   }
 
   delete(key) {
-    const index = this._hash(key);
-    const bucket = this.buckets[index];
-
-    if (bucket) {
-      for (let i = 0; i < bucket.length; i++) {
-        if (bucket[i][0] === key) {
-          bucket.splice(i, 1);
-          this.size--;
-          return true;
-        }
-      }
+    const bucket = this.buckets[this._hash(key)];
+    for (let i = 0; i < bucket.length; i++) {
+      if (bucket[i][0] === key) { bucket.splice(i, 1); this.size--; return true; }
     }
-
     return false;
   }
 
-  // Dynamic Array Resizing & Rehashing
-  _resize(newCapacity) {
-    const oldBuckets = this.buckets;
-    this.capacity = newCapacity;
-    this.buckets = new Array(newCapacity);
+  _resize() {
+    const old = this.buckets;
+    this.capacity *= 2;
+    this.buckets = new Array(this.capacity).fill(null).map(() => []);
     this.size = 0;
+    for (const bucket of old)
+      for (const [key, value] of bucket) this.set(key, value);
+  }
+}
+```
 
-    for (const bucket of oldBuckets) {
-      if (bucket) {
-        for (const [key, value] of bucket) {
-          this.set(key, value); // Rehash every existing key into double-sized table
-        }
-      }
-    }
+### Open Addressing Linear Probing (`HashTableLinearProbe`)
+```javascript
+class HashTableLinearProbe {
+  constructor(size = 16) {
+    this.capacity = size;
+    this.keys = new Array(size).fill(null);
+    this.values = new Array(size).fill(null);
+    this.size = 0;
+  }
+
+  set(key, value) {
+    let index = this._hash(key);
+    while (this.keys[index] !== null && this.keys[index] !== key)
+      index = (index + 1) % this.capacity;
+    if (this.keys[index] === null) this.size++;
+    this.keys[index] = key;
+    this.values[index] = value;
   }
 }
 ```
 
 ---
 
-## 5. Complexity Comparison Matrix
+## 3. JavaScript `Map` vs `Object`
 
-| Operations | Average Case | Worst Case (All Collisions) | Notes |
-| :--- | :--- | :--- | :--- |
-| **Search / Lookup** | $\mathcal{O}(1)$ | $\mathcal{O}(N)$ | Worst case occurs if all keys hash to the same bucket index. |
-| **Insertion** | $\mathcal{O}(1)$ amortized | $\mathcal{O}(N)$ | Amortized $\mathcal{O}(1)$ accounting for $2\times$ array rehashing. |
-| **Deletion** | $\mathcal{O}(1)$ | $\mathcal{O}(N)$ | Locates bucket and removes element link. |
-| **Space Complexity**| $\mathcal{O}(N)$ | $\mathcal{O}(N)$ | Linear space proportional to stored key-value entries. |
+| Feature | Plain Object `{}` | ES6 `Map` |
+| :--- | :--- | :--- |
+| **Allowed Key Types** | Strings and Symbols only (coerces numbers to strings). | **Any type** (Functions, Objects, Primitives). |
+| **Key Ordering** | Complex (numeric first, then creation order). | **Guaranteed exact insertion order**. |
+| **Size Determination**| $\mathcal{O}(n)$ manual key count: `Object.keys(obj).length`. | **$\mathcal{O}(1)$** property `.size`. |
+| **Prototype Security** | Inherits `Object.prototype` (prone to Prototype Pollution). | Pure map container; free of inherited prototype keys. |
+| **Performance** | Optimized for small static records. | Optimized for frequent addition, lookup, and deletion. |
+
+### ES6 `Set` Operations
+A `Set` is a Hash Table containing only unique keys.
+- **Union**: `new Set([...setA, ...setB])`
+- **Intersection**: `new Set([...setA].filter(x => setB.has(x)))`
+- **Difference**: `new Set([...setA].filter(x => !setB.has(x)))`
 
 ---
 
-## Key Production Takeaways
+## 4. Classic Algorithmic Problems & Solutions
 
-1. **Use ES6 `Map` over Plain Objects (`{}`) for Dynamic Key Sets**: `Map` supports keys of any type (objects, functions, numbers), maintains insertion order, and offers optimized $\mathcal{O}(1)$ JIT performance.
-2. **Prevent Hash Collision Attacks**: Adversaries can craft malicious inputs that all hash to index 0, turning an $\mathcal{O}(1)$ API server into an $\mathcal{O}(N^2)$ DoS target. Modern runtimes use randomized seed hashing.
-3. **Set Initial Capacities when Size is Known**: Pre-allocating bucket array capacity avoids expensive dynamic $2\times$ rehashing iterations during massive data ingestion.
-4. **Use `WeakMap` for Garbage-Collection Friendly Object Metadata**: When associating metadata with object keys without preventing GC cleanup, use `WeakMap` to avoid memory leaks.
+### 1. Two-Sum via Complement Lookup (`twoSum`)
+Find indices of two numbers that sum to `target`.
+- **Strategy**: As we iterate, check if `target - nums[i]` exists in the Hash Map.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
 
+```javascript
+function twoSum(nums, target) {
+  const seen = new Map();
+  for (let i = 0; i < nums.length; i++) {
+    const complement = target - nums[i];
+    if (seen.has(complement)) return [seen.get(complement), i];
+    seen.set(nums[i], i);
+  }
+  return null;
+}
+```
+
+### 2. Subarray Sum Equals K (`subarraySumK`)
+Count contiguous subarrays whose elements sum to $k$.
+- **Formula**: Prefix sum identity $\text{PrefixSum}[j] - \text{PrefixSum}[i] = k$.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
+
+```javascript
+function subarraySumK(nums, k) {
+  const prefixCount = new Map([[0, 1]]);
+  let currentSum = 0, count = 0;
+  for (const num of nums) {
+    currentSum += num;
+    if (prefixCount.has(currentSum - k)) {
+      count += prefixCount.get(currentSum - k);
+    }
+    prefixCount.set(currentSum, (prefixCount.get(currentSum) || 0) + 1);
+  }
+  return count;
+}
+```
+
+### 3. Longest Consecutive Sequence (`longestConsecutive`)
+Find the length of the longest consecutive elements sequence in an unsorted array.
+- **Strategy**: Store numbers in a `Set`. Only initiate counting when `!set.has(num - 1)` (i.e., `num` is the absolute start of a sequence).
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
+
+```javascript
+function longestConsecutive(nums) {
+  const numSet = new Set(nums);
+  let maxLen = 0;
+  for (const num of numSet) {
+    if (!numSet.has(num - 1)) {
+      let cur = num, len = 1;
+      while (numSet.has(cur + 1)) { cur++; len++; }
+      maxLen = Math.max(maxLen, len);
+    }
+  }
+  return maxLen;
+}
+```
+
+### 4. LRU Cache via Map Insertion Order (`LRUCache`)
+Implement Least Recently Used Cache with $\mathcal{O}(1)$ `get` and `put`.
+- **Mechanics**: JavaScript `Map` iterates keys in insertion order. When an element is accessed or updated, `delete(key)` and re-`set(key, value)` moves it to the back (most recently used).
+
+```javascript
+class LRUCache {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.cache = new Map();
+  }
+  get(key) {
+    if (!this.cache.has(key)) return -1;
+    const val = this.cache.get(key);
+    this.cache.delete(key);
+    this.cache.set(key, val);
+    return val;
+  }
+  put(key, value) {
+    if (this.cache.has(key)) this.cache.delete(key);
+    else if (this.cache.size >= this.capacity) {
+      const lruKey = this.cache.keys().next().value;
+      this.cache.delete(lruKey);
+    }
+    this.cache.set(key, value);
+  }
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **$\mathcal{O}(1)$ Average Performance**: Hash Tables convert key strings into indices for instant lookups.
+2. **Collision Handling**: Separate Chaining handles collisions via linked buckets; Open Addressing probes adjacent slots.
+3. **Reshashing**: Load factor exceeding 0.75 triggers an $\mathcal{O}(n)$ capacity double and rehash operation.
+4. **Prefer ES6 `Map` and `Set`**: Offers prototype safety, arbitrary key support, and guaranteed $\mathcal{O}(1)$ `.size`.

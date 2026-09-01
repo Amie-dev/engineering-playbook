@@ -1,148 +1,248 @@
-# Module 25: Real-World Systems Engineering — Production System Architecture & DSA Mapping
+# Module 25: Real-World Engineering Applications & System Design DSA
 
-## Overview
+## Theoretical Overview & Composite Systems
 
-Data Structures and Algorithms are not merely academic concepts; they constitute the **foundational infrastructure of production systems engineering**.
-
-From database storage engines and distributed message brokers to browser layout engines and API gateways, selecting the correct data structure directly dictates system throughput, memory footprints, and fault tolerance.
-
----
-
-## 1. Production System Architecture & DSA Mapping
+Production systems at engineering scale (Google, Amazon, Flipkart, Swiggy) do not use isolated data structures; they **combine multi-structure primitives** to meet latency and scalability SLAs.
 
 ```mermaid
-graph TD
-    subgraph Enterprise Infrastructure Systems
-        Gateway["API Gateway<br/>(Kong / Nginx)"] --> RateLimiter["Sliding Window / Token Bucket<br/>(Rate Limiting & Anti-DDoS)"]
-        
-        Search["Search Engine<br/>(ElasticSearch / Algolia)"] --> TrieEngine["Trie / Inverted Index<br/>(Instant Prefix Search & Autocomplete)"]
-        
-        Database["Database Engine<br/>(PostgreSQL / MySQL)"] --> BTree["B+ Tree / LSM Tree<br/>(Disk I/O Range Queries & Indexing)"]
-        
-        Scheduler["Distributed Job Queue<br/>(Celery / BullMQ)"] --> MinHeap["Min-Heap Priority Queue<br/>(Delayed Jobs & Cron Scheduling)"]
-        
-        BuildSystem["Package Manager<br/>(npm / Cargo / Webpack)"] --> TopoSort["Graph Topological Sort<br/>(Dependency Resolution & Build DAGs)"]
+flowchart TD
+    subgraph Composite Production Systems
+        System1["1. Autocomplete Engine: Trie + Sorting"]
+        System2["2. Social Network Graph: Adjacency List + BFS"]
+        System3["3. Task Scheduler: Max-Heap + Greedy Queue"]
+        System4["4. API Rate Limiter: Sliding Window Timestamp Queue"]
+        System5["5. Text Editor Engine: Dual LIFO Stacks"]
     end
 ```
 
 ---
 
-## 2. API Gateway Sliding Window Rate Limiter Sequence
+## 1. System Engineering Architecture Matrix
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as Client HTTP Request
-    participant Gateway as API Gateway
-    participant Limiter as Sliding Window Log Limiter
-    participant Backend as Microservice Engine
-
-    Client->>Gateway: POST /api/v1/checkout (IP: 192.168.1.1)
-    Gateway->>Limiter: checkRateLimit("192.168.1.1", limit=100, window=60s)
-    
-    Limiter->>Limiter: Prune timestamps older than (now - 60s) in O(1) time
-    
-    alt Request Count < Limit (100)
-        Limiter->>Limiter: Append current timestamp Date.now()
-        Limiter-->>Gateway: { allowed: true, remaining: 42 }
-        Gateway->>Backend: Forward HTTP Request to Microservice
-        Backend-->>Client: HTTP 200 OK
-    else Request Count >= Limit (100)
-        Limiter-->>Gateway: { allowed: false, remaining: 0 }
-        Gateway-->>Client: HTTP 429 Too Many Requests (Rate Limit Exceeded!)
-    end
-```
+| System Component | Core Problem | Data Structure Combination | Time Complexity | Primary Engineering Advantage |
+| :--- | :--- | :--- | :--- | :--- |
+| **Autocomplete Engine** | Fast prefix matching & rank sorting | **Trie + Frequency Sorting** | $\mathcal{O}(m + k \log k)$ | $\mathcal{O}(m)$ prefix lookup with top $K$ frequency ranking. |
+| **Social Network** | Mutual friends & shortest separation | **Graph Adjacency List + BFS** | $\mathcal{O}(V + E)$ | Finds 2nd-degree mutual friends and shortest degrees of separation. |
+| **Task Scheduler** | Idle CPU minimization with cooldown | **Max-Heap + Greedy Queue** | $\mathcal{O}(n)$ | Prioritizes highest-frequency tasks while enforcing cooldown slots. |
+| **API Rate Limiter** | Sliding window request throttle | **Map + Timestamp Queue** | $\mathcal{O}(1)$ amortized | Purges expired timestamps past sliding window boundary $W$. |
+| **Undo / Redo Engine** | Action recording & state recovery | **Dual LIFO Stacks** | $\mathcal{O}(1)$ per action | Immediate state restoration; new edits flush redo stack. |
 
 ---
 
-## 3. Comprehensive Production Infrastructure Mapping Matrix
+## 2. Complete System Implementations
 
-| Production Infrastructure Subsystem | Primary Data Structure / Algorithm | Technical Rationale & Benefit |
-| :--- | :--- | :--- |
-| **API Gateway Rate Limiter** | Sliding Window Log / Token Bucket | Eliminates burst traffic spike DoS attacks in $\mathcal{O}(1)$ time. |
-| **Search Engine Autocomplete** | Trie (Prefix Tree) / Inverted Index | Evaluates prefix query completions in $\mathcal{O}(K)$ time ($K = \text{query length}$). |
-| **Database Indexing (SQL)** | B+ Tree | Minimizes physical disk block I/O reads for range queries ($\mathcal{O}(\log_B N)$). |
-| **NoSQL Write Engine (RocksDB)**| LSM Tree (Log-Structured Merge) | Converts slow random disk writes into $\mathcal{O}(1)$ sequential log append writes. |
-| **Delayed Job Scheduler** | Min-Heap Priority Queue | Retrieves nearest scheduled timer job root in $\mathcal{O}(1)$ time. |
-| **Package Dependency Resolution**| Graph Topological Sort (Kahn's) | Computes build execution order and detects circular dependency errors in $\mathcal{O}(V + E)$. |
-| **Garbage Collector (V8)** | Mark-and-Sweep Graph DFS | Traces reachable heap objects from root pointers to clean unreferenced memory. |
-| **HTTP In-Memory Cache (Redis)** | Hash Map + Doubly Linked List (LRU)| Achieves $\mathcal{O}(1)$ cache lookups and $\mathcal{O}(1)$ least-recently-used entry eviction. |
-
----
-
-## 4. Production Code Implementation: Sliding Window Rate Limiter
+### 1. Autocomplete Suggestion Engine (`AutocompleteSystem`)
+Combines a Trie for prefix lookup with frequency-based sorting to return top $K$ queries.
 
 ```javascript
-class SlidingWindowRateLimiter {
-  constructor(limit = 100, windowMs = 60000) {
-    this.limit = limit;         // Max requests allowed per window
-    this.windowMs = windowMs;   // Time window duration in milliseconds
-    this.requests = new Map();  // Client Key (IP / User ID) -> Array of Timestamps
-  }
-
-  isAllowed(clientKey) {
-    const now = Date.now();
-    const windowStart = now - this.windowMs;
-
-    if (!this.requests.has(clientKey)) {
-      this.requests.set(clientKey, []);
-    }
-
-    const timestamps = this.requests.get(clientKey);
-
-    // Step 1: Sliding Window Pruning — Remove timestamps older than window boundary
-    let validStartIndex = 0;
-    while (validStartIndex < timestamps.length && timestamps[validStartIndex] <= windowStart) {
-      validStartIndex++;
-    }
-
-    if (validStartIndex > 0) {
-      timestamps.splice(0, validStartIndex); // Prune expired timestamps
-    }
-
-    // Step 2: Rate Limit Evaluation
-    if (timestamps.length < this.limit) {
-      timestamps.push(now); // Record request timestamp
-      return {
-        allowed: true,
-        remaining: this.limit - timestamps.length,
-        resetMs: this.windowMs - (now - timestamps[0])
-      };
-    }
-
-    return {
-      allowed: false,
-      remaining: 0,
-      resetMs: this.windowMs - (now - timestamps[0])
-    };
-  }
-
-  // Production Maintenance: Garbage collect inactive clients
-  cleanupInactiveClients(maxIdleMs = 300000) {
-    const now = Date.now();
-    for (const [key, timestamps] of this.requests.entries()) {
-      if (timestamps.length === 0 || timestamps[timestamps.length - 1] < now - maxIdleMs) {
-        this.requests.delete(key);
-      }
-    }
-  }
+class TrieNode {
+  constructor() { this.children = {}; this.isEnd = false; this.frequency = 0; }
 }
 
-// Verification
-const apiLimiter = new SlidingWindowRateLimiter(3, 1000); // 3 requests per 1 second
+class AutocompleteSystem {
+  constructor() { this.root = new TrieNode(); }
 
-console.log("Req 1 (IP 192.168.1.1):", apiLimiter.isAllowed("192.168.1.1").allowed); // true
-console.log("Req 2 (IP 192.168.1.1):", apiLimiter.isAllowed("192.168.1.1").allowed); // true
-console.log("Req 3 (IP 192.168.1.1):", apiLimiter.isAllowed("192.168.1.1").allowed); // true
-console.log("Req 4 (IP 192.168.1.1):", apiLimiter.isAllowed("192.168.1.1").allowed); // false (Blocked!)
+  insert(query, frequency = 1) {
+    let node = this.root;
+    for (const ch of query.toLowerCase()) {
+      if (!node.children[ch]) node.children[ch] = new TrieNode();
+      node = node.children[ch];
+    }
+    node.isEnd = true;
+    node.frequency += frequency;
+  }
+
+  _findAll(node, prefix) {
+    const results = [];
+    const dfs = (cur, word) => {
+      if (cur.isEnd) results.push({ query: word, frequency: cur.frequency });
+      for (const [ch, child] of Object.entries(cur.children)) dfs(child, word + ch);
+    };
+    dfs(node, prefix);
+    return results;
+  }
+
+  autocomplete(prefix, k = 3) {
+    let node = this.root;
+    const lp = prefix.toLowerCase();
+    for (const ch of lp) { if (!node.children[ch]) return []; node = node.children[ch]; }
+    return this._findAll(node, lp).sort((a, b) => b.frequency - a.frequency).slice(0, k);
+  }
+
+  recordSearch(query) { this.insert(query, 1); }
+}
+```
+
+### 2. Social Network Analytics Engine (`SocialNetwork`)
+Calculates mutual friend recommendations (depth-2 traversal) and degrees of separation (unweighted shortest path BFS).
+
+```javascript
+class SocialNetwork {
+  constructor() { this.adj = new Map(); }
+
+  addUser(u) { if (!this.adj.has(u)) this.adj.set(u, new Set()); }
+
+  addFriendship(u1, u2) {
+    this.addUser(u1); this.addUser(u2);
+    this.adj.get(u1).add(u2); this.adj.get(u2).add(u1);
+  }
+
+  suggestFriends(user) {
+    if (!this.adj.has(user)) return [];
+    const direct = this.adj.get(user);
+    const mutuals = new Map();
+    for (const friend of direct) {
+      for (const fof of this.adj.get(friend)) {
+        if (fof !== user && !direct.has(fof)) {
+          mutuals.set(fof, (mutuals.get(fof) || 0) + 1);
+        }
+      }
+    }
+    return [...mutuals.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => ({ user: name, mutualFriends: count }));
+  }
+
+  degreesOfSeparation(u1, u2) {
+    if (!this.adj.has(u1) || !this.adj.has(u2)) return -1;
+    if (u1 === u2) return 0;
+    const visited = new Set([u1]);
+    const queue = [[u1, 0]];
+    while (queue.length > 0) {
+      const [cur, dist] = queue.shift();
+      for (const friend of this.adj.get(cur)) {
+        if (friend === u2) return dist + 1;
+        if (!visited.has(friend)) { visited.add(friend); queue.push([friend, dist + 1]); }
+      }
+    }
+    return -1;
+  }
+}
+```
+
+### 3. CPU Task Scheduler with Cooldown (`taskScheduler`)
+Schedules tasks using a Max-Heap to prioritize highest-frequency tasks while enforcing mandatory idle cooldown slots $N$.
+
+```javascript
+function taskScheduler(tasks, cooldown) {
+  const freq = {};
+  for (const t of tasks) freq[t] = (freq[t] || 0) + 1;
+  const heap = new MaxHeap();
+  for (const count of Object.values(freq)) heap.push(count);
+
+  let totalTime = 0;
+  while (heap.size() > 0) {
+    const cycle = [], temp = [];
+    for (let i = 0; i <= cooldown; i++) {
+      if (heap.size() > 0) { const c = heap.pop(); cycle.push(c); if (c > 1) temp.push(c - 1); }
+    }
+    for (const c of temp) heap.push(c);
+    totalTime += heap.size() > 0 ? cooldown + 1 : cycle.length;
+  }
+  return totalTime;
+}
+```
+
+### 4. Sliding Window API Rate Limiter (`RateLimiter`)
+Enforces maximum API request caps within a rolling time window $W$ per client ID.
+
+```javascript
+class RateLimiter {
+  constructor(maxRequests, windowMs) {
+    this.maxRequests = maxRequests;
+    this.windowMs = windowMs;
+    this.requests = new Map();
+  }
+
+  allow(clientId, timestamp = Date.now()) {
+    if (!this.requests.has(clientId)) this.requests.set(clientId, []);
+    const ts = this.requests.get(clientId);
+    const start = timestamp - this.windowMs;
+    
+    // Purge expired timestamps outside sliding window
+    while (ts.length > 0 && ts[0] <= start) ts.shift();
+    
+    if (ts.length < this.maxRequests) {
+      ts.push(timestamp);
+      return true;
+    }
+    return false; // Rate limit exceeded!
+  }
+}
+```
+
+### 5. Dual-Stack Text Editor Undo/Redo Engine (`TextEditor`)
+Provides $\mathcal{O}(1)$ typing, deletion, undo, and redo operations using two stacks.
+
+```javascript
+class TextEditor {
+  constructor() { this.text = ""; this.undoStack = []; this.redoStack = []; }
+
+  type(str) {
+    this.undoStack.push({ action: "type", text: str, position: this.text.length });
+    this.text += str;
+    this.redoStack = []; // Clear redo history on new action
+    return this;
+  }
+
+  deleteChars(n) {
+    const actualN = Math.min(n, this.text.length);
+    const deleted = this.text.slice(-actualN);
+    this.undoStack.push({ action: "delete", text: deleted, position: this.text.length - actualN });
+    this.text = this.text.slice(0, -actualN);
+    this.redoStack = [];
+    return this;
+  }
+
+  undo() {
+    if (!this.undoStack.length) return this;
+    const a = this.undoStack.pop();
+    this.redoStack.push(a);
+    if (a.action === "type") this.text = this.text.slice(0, a.position);
+    else this.text = this.text.slice(0, a.position) + a.text + this.text.slice(a.position);
+    return this;
+  }
+
+  redo() {
+    if (!this.redoStack.length) return this;
+    const a = this.redoStack.pop();
+    this.undoStack.push(a);
+    if (a.action === "type") this.text = this.text.slice(0, a.position) + a.text + this.text.slice(a.position);
+    else this.text = this.text.slice(0, a.position) + this.text.slice(a.position + a.text.length);
+    return this;
+  }
+
+  getText() { return this.text; }
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Pattern Recognition Decision Matrix
 
-1. **System Performance Degrades Without Correct DSA**: Choosing an incorrect data structure (e.g. an $\mathcal{O}(N)$ array scan for rate-limiting or job scheduling) causes catastrophic backend CPU spikes under heavy load.
-2. **Master the Space-Time Trade-off**: High-scale systems frequently trade auxiliary RAM memory (e.g. Hash Tables, Inverted Indexes) to achieve sub-millisecond $\mathcal{O}(1)$ or $\mathcal{O}(\log N)$ API response times.
-3. **Always Plan for Memory Cleanup**: In production applications using `Map` or sliding window state, implement periodic cleanup sweeps (`cleanupInactiveClients()`) to prevent unbounded RAM memory leaks.
-4. **Recognize Cross-Domain Algorithmic Patterns**: The same core algorithms (BFS/DFS, Topological Sort, Heaps, Two Pointers) power build tools, databases, operating systems, and network protocols alike.
+```mermaid
+flowchart TD
+    Requirement[System Engineering Requirement] --> Prompt1{Is requirement 'Top K' or Extremum?}
+    Prompt1 -->|Yes| Heap[Use Priority Queue / Max-Heap / Min-Heap]
+    Prompt1 -->|No| Prompt2{Is requirement 'Shortest Unweighted Path'?}
+    
+    Prompt2 -->|Yes| BFS[Use Breadth-First Search Queue]
+    Prompt2 -->|No| Prompt3{Is requirement 'Prefix Matching / Autocomplete'?}
+    
+    Prompt3 -->|Yes| Trie[Use Trie / Prefix Tree]
+    Prompt3 -->|No| Prompt4{Is requirement 'Contiguous Subarray Optimization'?}
+    
+    Prompt4 -->|Yes| Sliding[Use Sliding Window Technique]
+    Prompt4 -->|No| Prompt5{Is requirement 'Fast LRU Cache'?}
+    
+    Prompt5 -->|Yes| Cache[Use Hash Map + Doubly Linked List]
+```
 
+---
+
+## Key Takeaways
+
+1. **Composite Design**: Real-world architectures combine simple data structures (e.g., Trie + Sorting for autocomplete; Hash Map + DLL for LRU cache).
+2. **State Restoration**: Text editors and browser history engines rely on paired LIFO stacks (`undoStack` / `redoStack`).
+3. **Rolling Telemetry**: Sliding Window Queues enforce API rate limits efficiently in $\mathcal{O}(1)$ amortized time.
+4. **Pattern Recognition Mastery**: Match requirement keywords directly to structural primitives (`Top K` $\to$ Heap; `Shortest Path` $\to$ BFS; `Prefix` $\to$ Trie; `Subarray` $\to$ Sliding Window).

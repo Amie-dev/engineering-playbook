@@ -1,150 +1,196 @@
-# Module 05: Stacks, Call Stack Execution Context, and Monotonic Stack Pattern
+# Module 05: Stacks, LIFO Principle, and Monotonic Stack Patterns
 
-## Overview
+## Theoretical Overview & Structural Mechanics
 
-A **Stack** is a linear data structure governed strictly by the **LIFO (Last-In, First-Out)** behavioral contract. The last element added to the stack is guaranteed to be the first element removed.
-
-In JavaScript, the V8 runtime relies on an internal **Call Stack** to track synchronous function execution contexts. In algorithm design, stacks excel at tracking nested operations, reversing sequences, evaluating mathematical expressions (Infix/Postfix), and solving range boundary problems via **Monotonic Stacks**.
-
----
-
-## 1. Stack Data Structure Mechanics & Memory Representations
+A **Stack** is a linear data structure adhering to the **LIFO (Last In, First Out)** principle. The last element added (pushed) to the stack is the first element removed (popped).
 
 ```mermaid
 flowchart TD
-    subgraph Array Backed Stack
-        ArrayMem["[Item 1, Item 2, Item 3]"]
-        TopPointer["top = length - 1"]
-        ArrayMem -->|push() / pop() at array end| TopPointer
+    subgraph LIFO Stack Operations
+        Direction["Push (Top) / Pop (Top)"]
+        Top["Item 3 (Top Slot)"]
+        Middle["Item 2"]
+        Bottom["Item 1 (Base Slot)"]
     end
-
-    subgraph Linked List Backed Stack
-        HeadNode["Head Node (Top)"] --> Node2["Node 2"] --> Node1["Node 1 (Bottom)"] --> NullPtr[null]
-        HeadNode -->|push() / pop() at Head| Ops["O(1) Strict Operation Guarantee"]
-    end
-```
-
-### Array Stack vs. Linked List Stack Comparison
-
-| Feature | Array-Based Stack (`Array.prototype.push/pop`) | Linked List Stack (`SinglyLinkedList`) |
-| :--- | :--- | :--- |
-| **Time Complexity** | $\mathcal{O}(1)$ amortized per push/pop | **Strict $\mathcal{O}(1)$** deterministic |
-| **Memory Overhead** | Contiguous RAM block; low pointer overhead | High (Extra `next` pointer object per node) |
-| **Cache Locality** | **Excellent** (Contiguous CPU cache hits) | Poor (Dispersed heap memory pointers) |
-| **Resizing Delay** | Occasional $2\times$ vector array reallocation delay | Zero resizing delay |
-
----
-
-## 2. V8 Call Stack & Recursion Depth Mechanics
-
-The V8 runtime allocates a fixed **Call Stack Space** (typically 10,000 frames or ~1 MB).
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Main as Global Execution Context
-    participant F1 as main()
-    participant F2 as calculateTax()
-    participant F3 as formatCurrency()
-
-    Main->>F1: Invoke main() -> Push Frame 1
-    F1->>F2: Invoke calculateTax() -> Push Frame 2
-    F2->>F3: Invoke formatCurrency() -> Push Frame 3
     
-    Note over F3: Frame 3 completes execution!
-    F3-->>F2: Return formatted string -> Pop Frame 3
-    F2-->>F1: Return tax calculation -> Pop Frame 2
-    F1-->>Main: Return HTTP Response -> Pop Frame 1
+    Direction --> Top
+    Top --> Middle
+    Middle --> Bottom
 ```
 
-> [!WARNING]
-> **Stack Overflow (`RangeError: Maximum call stack size exceeded`)**: Occurs when recursive calls lack a valid base case, exhausting available Call Stack frames.
+### Real-World Engineering Analogies
+1. **App View Navigation**: In mobile applications (e.g., PhonePe), moving from `Home` $\to$ `Send Money` $\to$ `Confirm` pushes views onto the navigation stack. Tapping "Back" pops the current view to reveal the previous screen.
+2. **JavaScript Call Stack**: Every function execution pushes a frame onto V8's call stack. Returning from a function pops its frame off the stack.
 
 ---
 
-## 3. Algorithmic Pattern: Monotonic Stack
+## 1. Stack Operations & Complexity Matrix
 
-A **Monotonic Stack** maintains its elements in strictly increasing or decreasing order. It solves "Next Greater Element" or "Range Boundary" problems in **$\mathcal{O}(N)$ time** (down from $\mathcal{O}(N^2)$ brute-force).
+| Operation | Description | Time Complexity | Space Complexity |
+| :--- | :--- | :--- | :--- |
+| **Push** | Appends an element to the top of the stack. | $\mathcal{O}(1)$ amortized | $\mathcal{O}(1)$ |
+| **Pop** | Removes and returns the top element. | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ |
+| **Peek / Top** | Inspects top element without removal. | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ |
+| **isEmpty** | Checks if stack contains zero elements. | $\mathcal{O}(1)$ | $\mathcal{O}(1)$ |
 
-### Monotonic Increasing Stack Algorithm (Next Greater Element)
+### Array-Based vs Linked-List-Based Implementation
+- **Array-Based (`StackArray`)**: Utilizes `.push()` and `.pop()` on JS arrays. Provides excellent CPU cache locality. Amortized $\mathcal{O}(1)$ push.
+- **Linked-List-Based**: Node allocation guarantees strict $\mathcal{O}(1)$ worst-case push time without dynamic resizing events, at the cost of additional pointer memory overhead.
 
-```mermaid
-flowchart TD
-    InputArr["Array: [2, 1, 5, 4, 3]"] --> IterateLoop[Iterate Index i from 0 to N-1]
+---
 
-    IterateLoop --> StackCheck{Is Stack Not Empty AND Current Element > Stack Top?}
-
-    StackCheck -- Yes --> PopAction["Pop Stack Top Index!<br/>Set Next Greater Element for popped index = Current Element"]
-    PopAction --> StackCheck
-
-    StackCheck -- No --> PushIndex["Push Current Index i onto Stack"]
-    PushIndex --> NextIter[Advance Loop i++]
-```
-
-### Monotonic Stack Code Implementation (Next Greater Element)
+## 2. Fundamental Code Implementations
 
 ```javascript
-// Solves Next Greater Element in O(N) Time and O(N) Auxiliary Space
-function nextGreaterElement(nums) {
-  const n = nums.length;
-  const result = new Int32Array(n).fill(-1);
-  const stack = []; // Stores indices
-
-  for (let i = 0; i < n; i++) {
-    const currentVal = nums[i];
-
-    // Maintain monotonic decreasing stack
-    while (stack.length > 0 && nums[stack[stack.length - 1]] < currentVal) {
-      const poppedIndex = stack.pop();
-      result[poppedIndex] = currentVal; // Current element is next greater!
-    }
-
-    stack.push(i);
+class StackArray {
+  constructor() { this.items = []; }
+  push(item) { this.items.push(item); return this; }
+  pop() {
+    if (this.isEmpty()) throw new Error("Stack Underflow");
+    return this.items.pop();
   }
-
-  return Array.from(result);
+  peek() { return this.isEmpty() ? undefined : this.items[this.items.length - 1]; }
+  isEmpty() { return this.items.length === 0; }
+  size() { return this.items.length; }
 }
-
-console.log(nextGreaterElement([2, 1, 5, 4, 3])); // Output: [5, 5, -1, -1, -1]
 ```
 
 ---
 
-## 4. Expression Parsing: Infix to Postfix (Shunting Yard Algorithm)
+## 3. Classic Algorithmic Problems & Solutions
 
-Stacks power compiler expression parsers (e.g. converting `(A + B) * C` to Reverse Polish Notation `A B + C *`):
+### 1. Valid Parentheses Matching (`isValidParentheses`)
+Verify if bracket delimiters `()`, `[]`, `{}` are closed in valid LIFO order.
+- **Strategy**: Push opening brackets onto the stack. When a closing bracket is encountered, pop the top element and verify if it matches the required opening bracket type.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
 
 ```javascript
-// Valid Parentheses Matching Pattern - O(N) Time, O(N) Space
-function isValidParentheses(s) {
+function isValidParentheses(str) {
   const stack = [];
-  const matchingMap = { ")": "(", "}": "{", "]": "[" };
-
-  for (let i = 0; i < s.length; i++) {
-    const char = s[i];
-
-    if (char === "(" || char === "{" || char === "[") {
+  const match = { ")": "(", "]": "[", "}": "{" };
+  for (const char of str) {
+    if ("([{".includes(char)) {
       stack.push(char);
-    } else if (matchingMap[char]) {
-      if (stack.length === 0 || stack.pop() !== matchingMap[char]) {
-        return false; // Mismatched or empty stack!
-      }
+    } else if (")]}".includes(char)) {
+      if (stack.length === 0 || stack.pop() !== match[char]) return false;
     }
   }
-
   return stack.length === 0;
 }
+```
 
-console.log(isValidParentheses("{[()]}")); // true
-console.log(isValidParentheses("{[(])}")); // false
+### 2. Reverse Polish Notation (Postfix) Evaluation (`evalRPN`)
+Evaluate arithmetic expressions in Reverse Polish Notation (e.g., `["2", "3", "+", "4", "*"]`).
+- **Strategy**: Push numbers onto the stack. When an operator is encountered, pop the top two numbers ($b$, then $a$), compute $a \text{ op } b$, and push the result back onto the stack.
+- **Complexity**: Time $\mathcal{O}(n)$, Space $\mathcal{O}(n)$.
+
+```javascript
+function evalRPN(tokens) {
+  const stack = [];
+  for (const token of tokens) {
+    if (["+", "-", "*", "/"].includes(token)) {
+      const b = stack.pop(), a = stack.pop();
+      switch (token) {
+        case "+": stack.push(a + b); break;
+        case "-": stack.push(a - b); break;
+        case "*": stack.push(a * b); break;
+        case "/": stack.push(Math.trunc(a / b)); break;
+      }
+    } else {
+      stack.push(Number(token));
+    }
+  }
+  return stack[0];
+}
+```
+
+### 3. Min Stack with $\mathcal{O}(1)$ Minimum Retrieval (`MinStack`)
+Design a stack supporting `push`, `pop`, `top`, and `getMin()` in $\mathcal{O}(1)$ time.
+- **Strategy**: Maintain an auxiliary `minStack` tracking the minimum value seen up to each stack height.
+
+```javascript
+class MinStack {
+  constructor() { this.stack = []; this.minStack = []; }
+  push(val) {
+    this.stack.push(val);
+    if (this.minStack.length === 0 || val <= this.minStack[this.minStack.length - 1]) {
+      this.minStack.push(val);
+    }
+  }
+  pop() {
+    const val = this.stack.pop();
+    if (val === this.minStack[this.minStack.length - 1]) this.minStack.pop();
+    return val;
+  }
+  top() { return this.stack[this.stack.length - 1]; }
+  getMin() { return this.minStack[this.minStack.length - 1]; }
+}
+```
+
+### 4. Monotonic Stack: Next Greater Element (`nextGreaterElement`)
+Find the next element greater than `arr[i]` for each index in an array.
+- **Monotonic Property**: Maintain a monotonically decreasing stack of indices. When an incoming element is greater than the stack's top index element, pop the index and record the answer.
+- **Complexity**: Time $\mathcal{O}(n)$ (each index pushed and popped at most once), Space $\mathcal{O}(n)$.
+
+```javascript
+function nextGreaterElement(arr) {
+  const result = new Array(arr.length).fill(-1);
+  const stack = [];
+  for (let i = 0; i < arr.length; i++) {
+    while (stack.length > 0 && arr[i] > arr[stack[stack.length - 1]]) {
+      result[stack.pop()] = arr[i];
+    }
+    stack.push(i);
+  }
+  return result;
+}
+```
+
+### 5. Daily Temperatures (`dailyTemperatures`)
+Calculate how many days to wait until a warmer temperature occurs.
+- **Strategy**: Monotonic stack variation recording the difference in array indices `i - prevIndex`.
+
+```javascript
+function dailyTemperatures(temps) {
+  const result = new Array(temps.length).fill(0);
+  const stack = [];
+  for (let i = 0; i < temps.length; i++) {
+    while (stack.length > 0 && temps[i] > temps[stack[stack.length - 1]]) {
+      const prev = stack.pop();
+      result[prev] = i - prev;
+    }
+    stack.push(i);
+  }
+  return result;
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 4. Advanced Two-Stack Architecture Patterns
 
-1. **Use Monotonic Stacks to Reduce $\mathcal{O}(N^2)$ to $\mathcal{O}(N)$**: Whenever a problem asks for the "next greater element", "previous smaller element", or "largest rectangle in histogram", use a monotonic stack.
-2. **Prefer Array `.push()` / `.pop()` for Stack Operations**: Array `.push()` and `.pop()` operate exclusively at the end of the array in $\mathcal{O}(1)$ time without incurring pointer allocation overhead.
-3. **Guard Against Call Stack Overflows in Recursion**: For deep recursion ($n > 10,000$), replace recursion with an explicit array stack inside an iterative loop to avoid `Maximum call stack size exceeded` errors.
-4. **Use Stacks for Undo/Redo and Backtracking History**: Stacks are the natural data structure for managing browser navigation history (`window.history.back()`), nested modal popups, and state rollback mechanisms.
+```mermaid
+flowchart LR
+    InStack["In-Stack (Push Buffer)"] --> DequeueTrigger{Dequeue Called?}
+    DequeueTrigger -->|Out-Stack Empty| Transfer["Pop all items from In-Stack & Push to Out-Stack (Reverses Order!)"]
+    Transfer --> OutStack["Out-Stack (Pop Buffer)"]
+    OutStack --> PopResult["Pop Element (FIFO Order)"]
+```
 
+### 1. Queue Using Two Stacks (`QueueFromStacks`)
+- `inStack` accepts incoming `enqueue` pushes.
+- `outStack` serves `dequeue` pops. When `outStack` is empty, all elements are moved from `inStack` to `outStack` (reversing their order to establish FIFO sequence).
+- **Amortized Complexity**: Dequeue is **Amortized $\mathcal{O}(1)$**.
+
+### 2. Browser History Navigation (`BrowserHistory`)
+- `backStack` stores backward navigation history.
+- `forwardStack` stores forward navigation history. Visiting a new URL flushes `forwardStack`.
+
+---
+
+## Key Takeaways
+
+1. **LIFO Core**: Access is strictly limited to the top element ($\mathcal{O}(1)$ push/pop).
+2. **Monotonic Stack Pattern**: Essential pattern for solving "next greater element" or "distance to next target" in optimal $\mathcal{O}(n)$ time instead of $\mathcal{O}(n^2)$ nested loops.
+3. **Auxiliary Tracking**: Maintain secondary stacks (`minStack`) to provide $\mathcal{O}(1)$ metadata access without altering main data structures.
+4. **State Machine Simulation**: Stacks simulate recursive call trees, browser history, and expression parsing state machines.

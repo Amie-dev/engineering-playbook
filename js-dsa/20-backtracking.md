@@ -1,153 +1,228 @@
-# Module 20: Backtracking Algorithms — State Space Search, Choice Invalidation, and Branch Pruning
+# Module 20: Backtracking, Decision Trees, & Constraint Satisfaction
 
-## Overview
+## Theoretical Overview & The Core Blueprint
 
-**Backtracking** is a systematic algorithmic strategy for solving combinatorial optimization and constraint-satisfaction problems (Subsets, Permutations, Sudoku, N-Queens, Word Search).
+**Backtracking** is a systematic algorithmic technique for solving constraint-satisfaction problems by searching through a State-Space Decision Tree.
 
-It incrementally builds candidate solutions along a **State Space Decision Tree** and immediately **prunes (backtracks)** any branch that violates problem constraints, avoiding brute-force evaluation of non-viable solution spaces.
-
----
-
-## 1. Backtracking Decision Tree & Branch Pruning
+It builds solution candidates incrementally and **prunes** (abandons) a candidate branch as soon as it determines that the branch cannot lead to a valid solution.
 
 ```mermaid
 flowchart TD
-    Root["Root Decision State: []"] --> Choose1["Choose 1"]
-    Root --> Choose2["Choose 2"]
-    Root --> Choose3["Choose 3"]
-
-    Choose1 --> Branch1_1["Path: [1, 2]"]
-    Choose1 --> Branch1_2["Path: [1, 3]"]
-
-    Branch1_1 --> Validate1{Violates Constraint?}
-    Validate1 -- Yes --> Prune1["PRUNE BRANCH & BACKTRACK!<br/>(Undo choice: path.pop())"]
-    Validate1 -- No --> Sol1["VALID SOLUTION: Save to Results"]
+    State["Current State"] --> ChoiceA["Choice A"]
+    State --> ChoiceB["Choice B"]
+    
+    ChoiceA --> CheckA{Is Valid?}
+    CheckA -->|No| PruneA["PRUNE (Backtrack / Undo)"]
+    CheckA -->|Yes| RecurseA["EXPLORE (Recurse down tree)"]
+    
+    ChoiceB --> CheckB{Is Valid?}
+    CheckB -->|Yes| RecurseB["EXPLORE (Recurse down tree)"]
 ```
 
-### The 3-Step Canonical Backtracking Template
+### The Universal Backtracking Template
+Every backtracking implementation follows a 3-step state cycle:
 
-Every backtracking function adheres strictly to this three-step lifecycle inside a decision loop:
-
-```mermaid
-stateDiagram-v2
-    [*] --> MakeChoice: 1. Make Choice (State Mutation)
-    MakeChoice --> ExploreRecurse: 2. Recurse (Explore Subtree)
-    ExploreRecurse --> UndoChoice: 3. Undo Choice (Backtrack State Cleanup)
-    UndoChoice --> [*]: Return to Parent Node
-```
-
----
-
-## 2. Combinatorial Problem Complexity Comparison
-
-| Problem Class | Output Count Formula | Time Complexity | Auxiliary Space | Example Problems |
-| :--- | :--- | :--- | :--- | :--- |
-| **Subsets / Power Set** | $2^N$ | $\mathcal{O}(N \cdot 2^N)$ | $\mathcal{O}(N)$ recursion depth | Generate all sub-assemblies. |
-| **Combinations** | $\binom{N}{K} = \frac{N!}{K!(N-K)!}$ | $\mathcal{O}(K \cdot \binom{N}{K})$ | $\mathcal{O}(K)$ | Combination Sum ($K$ items summing to Target). |
-| **Permutations** | $N!$ | $\mathcal{O}(N \cdot N!)$ | $\mathcal{O}(N)$ | Anagram generation, TSP. |
-| **Grid Search / N-Queens**| Constraint Bounded | $\mathcal{O}(N!)$ worst-case | $\mathcal{O}(N^2)$ grid memory | Sudoku Solver, N-Queens. |
-
----
-
-## 3. Production Backtracking Implementations
+$$\text{CHOOSE } \longrightarrow \text{ EXPLORE } \longrightarrow \text{ UNDO (BACKTRACK)}$$
 
 ```javascript
-// 1. Array Permutations Pattern (LeetCode #46) - O(N * N!) Time
-function permute(nums) {
-  const results = [];
-  const used = new Array(nums.length).fill(false);
-
-  function backtrack(currentPath) {
-    // Goal State Reached
-    if (currentPath.length === nums.length) {
-      results.push([...currentPath]); // Save snapshot copy of path
-      return;
-    }
-
-    for (let i = 0; i < nums.length; i++) {
-      if (used[i]) continue; // Constraint Check (Prune duplicates)
-
-      // 1. Make Choice
-      currentPath.push(nums[i]);
-      used[i] = true;
-
-      // 2. Recurse & Explore
-      backtrack(currentPath);
-
-      // 3. Undo Choice (Backtrack State Cleanup)
-      currentPath.pop();
-      used[i] = false;
-    }
+function backtrack(state, choices) {
+  if (isGoal(state)) { results.push(copy(state)); return; }
+  for (const choice of choices) {
+    if (!isValid(choice)) continue;   // 1. PRUNE invalid choices early
+    makeChoice(state, choice);         // 2. CHOOSE
+    backtrack(state, remainingChoices); // 3. EXPLORE recursively
+    undoChoice(state, choice);         // 4. UNDO state changes
   }
-
-  backtrack([]);
-  return results;
 }
+```
 
-// 2. Subsets / Power Set Pattern (LeetCode #78) - O(N * 2^N) Time
-function subsets(nums) {
+---
+
+## 1. Backtracking Problems Complexity Matrix
+
+| Problem | Time Complexity | Auxiliary Space (Stack Depth) | Decision Tree Branching Factor |
+| :--- | :--- | :--- | :--- |
+| **Subsets / Power Set** | **$\mathcal{O}(2^n \cdot n)$** | $\mathcal{O}(n)$ | Binary choice (Include vs Exclude). |
+| **Permutations** | **$\mathcal{O}(n! \cdot n)$** | $\mathcal{O}(n)$ | $n$ choice swaps per level. |
+| **Combination Sum** | **$\mathcal{O}(n^{t/\min})$** | $\mathcal{O}(t/\min)$ | $n$ candidates with reuse enabled. |
+| **N-Queens Problem** | **$\mathcal{O}(N!)$** | $\mathcal{O}(N)$ | $N$ columns per row placement. |
+| **Sudoku Solver** | **$\mathcal{O}(9^m)$** ($m=$ empty cells)| $\mathcal{O}(m)$ | 9 digit choices per cell. |
+| **Generate Parentheses** | **$\mathcal{O}\left(\frac{4^n}{\sqrt{n}}\right)$** | $\mathcal{O}(n)$ | Catalan number sequence bound $C_n$. |
+
+---
+
+## 2. Fundamental Combinatorial Generators
+
+### 1. Power Set Subsets (`generateSubsets`)
+Generate all $2^n$ subsets of an array using binary include/exclude decisions.
+
+```javascript
+function generateSubsets(nums) {
   const results = [];
-
-  function backtrack(startIndex, currentPath) {
-    results.push([...currentPath]); // Record subset at every tree node
-
-    for (let i = startIndex; i < nums.length; i++) {
-      // 1. Make Choice
-      currentPath.push(nums[i]);
-
-      // 2. Recurse with next index
-      backtrack(i + 1, currentPath);
-
-      // 3. Undo Choice
-      currentPath.pop();
-    }
+  function backtrack(index, current) {
+    if (index === nums.length) { results.push([...current]); return; }
+    backtrack(index + 1, current); // Exclude option
+    current.push(nums[index]);     // CHOOSE
+    backtrack(index + 1, current); // EXPLORE
+    current.pop();                 // UNDO
   }
-
   backtrack(0, []);
   return results;
 }
+```
 
-// 3. Combination Sum Pattern (LeetCode #39) - O(2^T) Time
-function combinationSum(candidates, target) {
+### 2. Element Permutations via In-Place Swaps (`permuteSwap`)
+Generate all $n!$ orderings of array elements by swapping candidates into the active index.
+
+```javascript
+function permuteSwap(nums) {
   const results = [];
-  candidates.sort((a, b) => a - b); // Pre-sort for early pruning
-
-  function backtrack(startIndex, currentPath, currentSum) {
-    if (currentSum === target) {
-      results.push([...currentPath]);
-      return;
-    }
-
-    for (let i = startIndex; i < candidates.length; i++) {
-      const val = candidates[i];
-      if (currentSum + val > target) break; // EARLY PRUNING: Remaining choices will exceed target!
-
-      // 1. Make Choice
-      currentPath.push(val);
-
-      // 2. Recurse (i remains i because candidates can be reused!)
-      backtrack(i, currentPath, currentSum + val);
-
-      // 3. Undo Choice
-      currentPath.pop();
+  function backtrack(start) {
+    if (start === nums.length) { results.push([...nums]); return; }
+    for (let i = start; i < nums.length; i++) {
+      [nums[start], nums[i]] = [nums[i], nums[start]]; // CHOOSE (Swap)
+      backtrack(start + 1);                            // EXPLORE
+      [nums[start], nums[i]] = [nums[i], nums[start]]; // UNDO (Swap back)
     }
   }
-
-  backtrack(0, [], 0);
+  backtrack(0);
   return results;
 }
+```
 
-console.log("Permutations [1,2,3]:", permute([1, 2, 3]).length); // 6 permutations
-console.log("Subsets [1,2,3]     :", subsets([1, 2, 3]).length); // 8 subsets
-console.log("Combination Sum 7   :", combinationSum([2, 3, 6, 7], 7)); // [[2, 2, 3], [7]]
+### 3. Combination Sum with Branch Pruning (`combinationSum`)
+Find unique combinations of candidates that sum to `target` (elements can be reused).
+- **Pruning Optimization**: Sort candidates initially; break out of the loop immediately when `candidate > remaining`.
+
+```javascript
+function combinationSum(candidates, target) {
+  const results = [];
+  candidates.sort((a, b) => a - b);
+
+  function backtrack(start, current, remaining) {
+    if (remaining === 0) { results.push([...current]); return; }
+    for (let i = start; i < candidates.length; i++) {
+      if (candidates[i] > remaining) break;              // PRUNE
+      current.push(candidates[i]);                        // CHOOSE
+      backtrack(i, current, remaining - candidates[i]);   // EXPLORE (reuse i)
+      current.pop();                                      // UNDO
+    }
+  }
+  backtrack(0, [], target);
+  return results;
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Constraint Satisfaction Solvers
 
-1. **Always Pass Copy Snapshots of Solution Paths**: Push `[...currentPath]` into results array. If you push `currentPath` directly, future `.pop()` operations will mutate all saved results.
-2. **Pre-Sort Arrays to Enable Early Branch Pruning**: Sorting input arrays enables `if (currentSum + val > target) break`, cutting off entire invalid subtrees early.
-3. **Use Boolean Arrays for Fast $\mathcal{O}(1)$ Usage Checks**: Replace `currentPath.includes(val)` ($\mathcal{O}(N)$ lookup) with a `used` boolean array ($\mathcal{O}(1)$ check) for permutation algorithms.
-4. **Master the `startIndex` Choice Filter**: Use a `startIndex` parameter to enforce increasing choice order for Subsets/Combinations, preventing duplicate permutations like `[1, 2]` and `[2, 1]`.
+### 1. N-Queens Problem with $\mathcal{O}(1)$ Hash Sets (`solveNQueens`)
+Place $N$ non-attacking chess queens on an $N \times N$ chessboard.
+- **$\mathcal{O}(1)$ Conflict Checks**: Track attacked paths using three Hash Sets:
+  - `cols`: Vertical column check.
+  - `diag1`: Major diagonal check ($row - col$).
+  - `diag2`: Minor diagonal check ($row + col$).
 
+```javascript
+function solveNQueens(n) {
+  const results = [];
+  const board = Array.from({ length: n }, () => Array(n).fill("."));
+  const cols = new Set(), diag1 = new Set(), diag2 = new Set();
+
+  function backtrack(row) {
+    if (row === n) { results.push(board.map((r) => r.join(""))); return; }
+    for (let col = 0; col < n; col++) {
+      if (cols.has(col) || diag1.has(row - col) || diag2.has(row + col)) continue; // PRUNE
+      board[row][col] = "Q";
+      cols.add(col); diag1.add(row - col); diag2.add(row + col); // CHOOSE
+      backtrack(row + 1);                                        // EXPLORE
+      board[row][col] = ".";
+      cols.delete(col); diag1.delete(row - col); diag2.delete(row + col); // UNDO
+    }
+  }
+  backtrack(0);
+  return results;
+}
+```
+
+### 2. Sudoku Solver Grid Engine (`solveSudoku`)
+Solve a $9 \times 9$ Sudoku grid by filling empty `.` cells with digits $1-9$.
+
+```javascript
+function solveSudoku(board) {
+  function isValid(board, row, col, num) {
+    const char = String(num);
+    for (let i = 0; i < 9; i++) {
+      if (board[row][i] === char) return false;
+      if (board[i][col] === char) return false;
+      const boxRow = Math.floor(row / 3) * 3 + Math.floor(i / 3);
+      const boxCol = Math.floor(col / 3) * 3 + (i % 3);
+      if (board[boxRow][boxCol] === char) return false;
+    }
+    return true;
+  }
+
+  function solve(board) {
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        if (board[r][c] === ".") {
+          for (let num = 1; num <= 9; num++) {
+            if (isValid(board, r, c, num)) {
+              board[r][c] = String(num);    // CHOOSE
+              if (solve(board)) return true; // EXPLORE
+              board[r][c] = ".";             // UNDO
+            }
+          }
+          return false; // Backtrack on invalid configuration
+        }
+      }
+    }
+    return true; // All cells filled
+  }
+  solve(board);
+  return board;
+}
+```
+
+### 3. Generate Valid Parentheses Combinations (`generateParentheses`)
+Generate all valid combinations of $n$ pairs of parentheses.
+- **Pruning Rules**:
+  1. Add `'('` only if `openCount < n`.
+  2. Add `')'` only if `closeCount < openCount`.
+
+```javascript
+function generateParentheses(n) {
+  const results = [];
+  function backtrack(current, openCount, closeCount) {
+    if (current.length === 2 * n) { results.push(current); return; }
+    if (openCount < n) backtrack(current + "(", openCount + 1, closeCount);
+    if (closeCount < openCount) backtrack(current + ")", openCount, closeCount + 1);
+  }
+  backtrack("", 0, 0);
+  return results;
+}
+```
+
+---
+
+## 4. Backtracking vs Dynamic Programming Decision Tree
+
+```mermaid
+flowchart TD
+    ProblemType[Algorithmic Problem Goal] --> GoalCheck{What is the required output?}
+    GoalCheck -->|Generate / List ALL Solutions| UseBT[Use Backtracking]
+    GoalCheck -->|Find Max / Min / Count Total| CheckOverlap{Are subproblems overlapping?}
+    
+    CheckOverlap -->|Yes| UseDP[Use Dynamic Programming - O(n) / O(n²)]
+    CheckOverlap -->|No| UseGreedy[Use Greedy Algorithm / Divide & Conquer]
+```
+
+---
+
+## Key Takeaways
+
+1. **State Restoration**: Always restore local component state (`current.pop()`, `board[r][c] = '.'`) after recursive exploration returns.
+2. **Aggressive Pruning**: Pruning invalid choices early transforms brute-force searches into high-performance solvers.
+3. **$\mathcal{O}(1)$ Diagonal Check Trick**: Identify chessboard diagonals using $row - col$ and $row + col$.
+4. **Backtracking vs DP**: Use Backtracking when enumerating all actual configurations; use DP when calculating optimal scalar metrics.
