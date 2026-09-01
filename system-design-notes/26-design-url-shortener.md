@@ -1,151 +1,207 @@
-# Module 26: System Design — High-Scale TinyURL & URL Shortener Architecture
+# Module 26: System Design - Scalable URL Shortener (Bitly / TinyURL)
 
-## Overview
+## Theoretical Overview & High-Level Architecture
 
-Designing a distributed **URL Shortener Service** (such as TinyURL or Bitly) requires converting long URLs (`https://example.com/products/electronics/laptops/gaming-series-2026?ref=analytics_991823`) into unique, compact 7-character short keys (`https://tiny.url/aB3xD9g`).
-
-The system must handle high traffic volume ($100\text{M}$ URLs generated per day, $1\text{B}$ daily redirect requests) with sub-10ms latency, high availability ($99.99\%$), and zero key collision risk.
-
-Understanding **Capacity Estimation Math**, **Base62 Encoding Algorithms**, **Key Generation Service (KGS)** pre-generation, and **HTTP 301 vs. 302 Redirect Semantics** is essential.
-
----
-
-## 1. Capacity Estimation & Back-of-the-Envelope Math
-
-$$\text{Capacity Math}: 62^7 = 3,521,614,606,208 \text{ unique keys (3.5 Trillion URLs)}$$
-
-### Back-of-the-Envelope Estimates
-
-| Metric | Quantitative Calculation | System Target |
-| :--- | :--- | :--- |
-| **Write Throughput** | $100\text{M URLs} / 86,400\text{s} \approx 1,160 \text{ writes/sec}$ | Peak Write QPS: $2,500 \text{ req/sec}$ |
-| **Read Throughput (10:1 Ratio)** | $1\text{B Redirects} / 86,400\text{s} \approx 11,600 \text{ reads/sec}$ | Peak Read QPS: $25,000 \text{ req/sec}$ |
-| **Storage (10 Years)** | $100\text{M/day} \times 365 \times 10 \text{ yrs} \times 500 \text{ bytes/row}$ | **$\approx 18.25 \text{ Terabytes}$** |
-| **RAM Cache (80/20 Rule)** | $20\% \text{ of daily read traffic cached in Redis}$ | **$\approx 10 \text{ Gigabytes RAM}$** |
-
----
-
-## 2. URL Shortener Distributed System Architecture
+A **URL Shortener** (e.g., TinyURL, Bitly) converts a long web address into a compact 7-character short link. When accessed, the short link redirects the user to the original target destination.
 
 ```mermaid
 flowchart TD
-    Client[Client Web Browser / Mobile App] --> LB[Cloud Load Balancer]
-    LB --> Gateway[API Gateway / Router]
-
-    subgraph Write Path (URL Shortening)
-        Gateway -->|POST /api/v1/shorten| WriteSvc[URL Shortener Write Service]
-        WriteSvc --> KGS[Key Generation Service - KGS Pool]
-        WriteSvc --> DB[(NoSQL Key-Value DB / MongoDB / DynamoDB)]
-    end
-
-    subgraph Read Path (Redirect Lookup)
-        Gateway -->|GET /aB3xD9g| ReadSvc[Redirect Read Service]
-        ReadSvc --> RedisCache[(Redis In-Memory Cache)]
-        RedisCache -- "Cache Miss" --> DB
-        ReadSvc -- "Cache Hit (sub-5ms)" --> Client
-    end
-
-    style KGS fill:#dcfce7,stroke:#15803d
-    style RedisCache fill:#dbeafe,stroke:#1d4ed8
+    Client["Client Browser"] -->|1. GET /AyshBrt| CDN["CDN Edge / Load Balancer"]
+    
+    CDN -->|2. Cache Check| Cache["Redis Cache Layer (L2)"]
+    Cache -->|2a. Cache Hit (99% Traffic)| RedirectHit["Return 302 Redirect (Location Header)"]
+    
+    Cache -.->|2b. Cache Miss| DB[("Distributed Database (PostgreSQL / DynamoDB)")]
+    DB -.->|3. Read Long URL| WriteCache["Populate Cache"] --> RedirectHit
 ```
+
+### Real-World Case Study: Government Scheme Short Link Platform
+The Prime Minister's Office shares short links for national welfare initiatives (e.g., Ayushman Bharat, PM-KISAN):
+- **Traffic Load**: A single tweet generates **50+ million clicks in hours**.
+- **System SLAs**: High availability (99.99%), sub-10ms redirect latencies across low-bandwidth 2G/3G mobile networks, and state-level click analytics tracking.
 
 ---
 
-## 3. HTTP 301 Permanent vs. HTTP 302 Temporary Redirect Semantics
+## 1. Requirements & Capacity Estimation
 
-```mermaid
-flowchart TD
-    RedirectChoice[Select HTTP Redirect Status Code] --> Code{Analytics Requirement}
+### System SLA Parameters
+- **Write Throughput**: 1 Million new URLs generated per day ($\approx 12\text{ QPS}$ write).
+- **Read Throughput**: 100 Million redirects per day ($\approx 1,160\text{ QPS}$ read, peaking at $10,000\text{ QPS}$).
+- **Read-to-Write Ratio**: **$100:1$** (Ultra read-heavy workload).
 
-    Code -- "1. HTTP 301 (Permanent Redirect)" --> R301["HTTP 301 Moved Permanently<br/>- Browser CACHES short-to-long mapping locally on client device<br/>- Future visits bypass Shortener Backend completely!<br/>- Lowest server CPU load, BUT destroys click analytics tracking!"]
+### Capacity Math & Base62 Collision Invariant
+Using a 7-character Base62 string (characters `0-9`, `a-z`, `A-Z`):
 
-    Code -- "2. HTTP 302 (Temporary Redirect)" --> R302["HTTP 302 Found / Temporary<br/>- Browser EVERY request hits Shortener Backend API<br/>- Backend records User-Agent, Geolocation, IP, Timestamp<br/>- Enables real-time Analytics Dashboards (Bitly Click Analytics)"]
+$$\text{Possible Short Code Combinations} = 62^7 = 3.52 \times 10^{12} \quad (\approx 3.52 \text{ Trillion URLs})$$
 
-    style R302 fill:#dcfce7,stroke:#15803d
-    style R301 fill:#fee2e2,stroke:#dc2626
-```
+At 1 million URLs created daily, $62^7$ capacity will last **over 9,000 years** without code exhaustion.
 
 ---
 
-## 4. Key Generation Service (KGS) & Base62 Encoding Engine
+## 2. Encoding Strategies Comparison Matrix
+
+| Strategy | Short Code Generation | Collision Risk | Predictability Risk | Engineering Complexity |
+| :--- | :--- | :--- | :--- | :--- |
+| **Counter + Base62** | Auto-increment ID converted to Base62. | **Zero Collisions**. | High (User can guess `id+1`). | Low (Requires range allocator). |
+| **MD5/SHA256 Hash** | Truncate MD5 hash of URL to 7 chars. | High (Requires re-hashing). | **Zero Predictability**. | Medium (Requires collision check). |
+| **Pre-generated Keys** | Key Generation Service (KGS) pre-creates keys. | **Zero Collisions**. | Low (Randomized pre-fill). | Medium (Requires KGS management). |
+
+---
+
+## 3. Core Component Implementations
+
+### 1. Base62 Encoder / Decoder (`Base62`)
+```javascript
+class Base62 {
+  constructor() {
+    this.chars = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    this.base = 62;
+  }
+
+  encode(num) {
+    if (num === 0) return this.chars[0];
+    let result = "";
+    let n = num;
+    while (n > 0) {
+      result = this.chars[n % this.base] + result;
+      n = Math.floor(n / this.base);
+    }
+    return result;
+  }
+
+  decode(str) {
+    let result = 0;
+    for (const char of str) {
+      result = result * this.base + this.chars.indexOf(char);
+    }
+    return result;
+  }
+
+  encodePadded(num, length = 7) {
+    let encoded = this.encode(num);
+    while (encoded.length < length) encoded = this.chars[0] + encoded;
+    return encoded;
+  }
+}
+```
+
+### 2. Distributed Counter Range Allocator (`RangeAllocator`)
+To avoid central counter database bottlenecks across multi-region application servers, a ZooKeeper coordinator pre-assigns **Counter Ranges** (e.g., 1,000,000 IDs per server):
 
 ```javascript
-class Base62Encoder {
-  static CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-  static BASE = 62;
-
-  // Convert 64-bit Auto-Increment ID into 7-character Base62 String
-  static encode(uniqueAutoIncId) {
-    if (uniqueAutoIncId === 0) return "0".padStart(7, "0");
-
-    let num = Number(uniqueAutoIncId);
-    let str = "";
-
-    while (num > 0) {
-      const remainder = num % Base62Encoder.BASE;
-      str = Base62Encoder.CHARS[remainder] + str;
-      num = Math.floor(num / Base62Encoder.BASE);
-    }
-
-    // Pad to fixed 7-character key length
-    return str.padStart(7, "0");
+class RangeAllocator {
+  constructor(rangeSize = 1000000) {
+    this.rangeSize = rangeSize;
+    this.nextStart = 0;
   }
 
-  // Convert 7-character Base62 string back to 64-bit ID
-  static decode(base62Str) {
-    let num = 0;
-    for (let i = 0; i < base62Str.length; i++) {
-      const char = base62Str[i];
-      const charIndex = Base62Encoder.CHARS.indexOf(char);
-      num = num * Base62Encoder.BASE + charIndex;
-    }
-    return num;
+  allocateRange(serverId) {
+    const start = this.nextStart;
+    const end = start + this.rangeSize - 1;
+    this.nextStart = end + 1; // Advance start pointer for next server
+    return { serverId, start, end };
   }
 }
+```
 
-// Key Generation Service (KGS) Buffer Pre-fetch Simulator
-class KeyGenerationService {
-  constructor(batchSize = 5) {
-    this.currentId = 1000000000; // Start at 1 Billion
-    this.keyBuffer = [];
-    this.batchSize = batchSize;
-    this._refillBuffer();
+### 3. Hash-Based Generator with Re-hashing (`HashBasedShortener`)
+```javascript
+const crypto = require("crypto");
+
+class HashBasedShortener {
+  constructor() {
+    this.urlMap = new Map();
+    this.base62 = new Base62();
   }
 
-  _refillBuffer() {
-    console.log(`⚡ [KGS PRE-GENERATION] Pre-generating batch of ${this.batchSize} Base62 keys in RAM...`);
-    for (let i = 0; i < this.batchSize; i++) {
-      const key = Base62Encoder.encode(this.currentId++);
-      this.keyBuffer.push(key);
-    }
-  }
+  shorten(longUrl) {
+    let shortCode;
+    let attempt = 0;
+    let input = longUrl;
 
-  fetchKey() {
-    if (this.keyBuffer.length === 0) {
-      this._refillBuffer();
+    while (true) {
+      const hash = crypto.createHash("md5").update(input).digest("hex");
+      const num = parseInt(hash.substring(0, 12), 16);
+      shortCode = this.base62.encodePadded(num, 7);
+
+      if (!this.urlMap.has(shortCode)) break; // Unique code found!
+      attempt++;
+      input = longUrl + attempt; // Re-hash with salt on collision
     }
-    const key = this.keyBuffer.shift();
-    console.log(`  ✓ [KGS ASSIGNED KEY] Assigned Key '${key}'`);
-    return key;
+
+    this.urlMap.set(shortCode, longUrl);
+    return shortCode;
   }
 }
-
-// Execution Demonstration
-const kgs = new KeyGenerationService(3);
-const key1 = kgs.fetchKey();
-const key2 = kgs.fetchKey();
-const key3 = kgs.fetchKey();
-const key4 = kgs.fetchKey(); // Triggers KGS buffer refill
-
-console.log("\nDecoded ID for Key 1:", Base62Encoder.decode(key1));
 ```
 
 ---
 
-## Key Production Takeaways
+## 4. HTTP Redirect Semantics: 301 vs. 302
 
-1. **Use Key Generation Service (KGS) to Eliminate Runtime Collisions**: Pre-generate unique 7-character Base62 keys in a dedicated KGS service using a distributed sequence generator (Snowflake ID) to achieve zero collision risk during write requests.
-2. **Use HTTP 302 Redirects for Click Analytics**: Select `302 Found` temporary redirects when building analytics platforms (Bitly) to force client browsers to hit your backend on every click, recording referrer and geolocation metadata.
-3. **Cache Popular Redirect Mappings in Redis**: Store the most frequently accessed short-to-long URL mappings in Redis with LRU (Least Recently Used) eviction to serve $80\%+$ of read traffic in sub-5ms latency.
-4. **Partition Database by Short Key Hash**: Shard the database horizontally using `hash(short_key)` to distribute read and write throughput evenly across storage nodes.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Browser as User Browser
+    participant Shortener as Shortener Gateway
+    
+    note over Browser,Shortener: 301 Permanent Redirect (Browser Caches URL)
+    Browser->>Shortener: GET /AyshBrt
+    Shortener-->>Browser: HTTP 301 (Location: https://pmjay.gov.in/registration)
+    Note over Browser: Subsequent clicks BYPASS server entirely! (Reduces Server QPS, loses analytics).
 
+    note over Browser,Shortener: 302 Temporary Redirect (Server Hits Every Time)
+    Browser->>Shortener: GET /AyshBrt
+    Shortener-->>Browser: HTTP 302 (Location: https://pmjay.gov.in/registration)
+    Note over Shortener: Every click logs geo analytics & click counters accurately!
+```
+
+---
+
+## 5. Aggressive Caching & Expiration Engine (`URLStore`)
+
+To maintain sub-10ms redirect SLAs under viral spikes, hot short links are cached in Redis using an LRU eviction policy.
+
+```javascript
+class URLStore {
+  constructor() {
+    this.urls = new Map();
+  }
+
+  create(longUrl, options = {}) {
+    const shortCode = options.customCode || generateUniqueCode();
+    this.urls.set(shortCode, {
+      longUrl,
+      shortCode,
+      createdAt: Date.now(),
+      expiresAt: options.ttlMs ? Date.now() + options.ttlMs : null,
+      isActive: true,
+      clickCount: 0,
+    });
+    return shortCode;
+  }
+
+  resolve(shortCode) {
+    const entry = this.urls.get(shortCode);
+    if (!entry || !entry.isActive) return { found: false, reason: "not_found" };
+    
+    // Check TTL Expiration
+    if (entry.expiresAt && Date.now() > entry.expiresAt) {
+      entry.isActive = false;
+      return { found: false, reason: "expired" };
+    }
+
+    entry.clickCount++; // Increment Analytics
+    return { found: true, longUrl: entry.longUrl, clickCount: entry.clickCount };
+  }
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Use 7-Character Base62 Encoding**: Base62 yields 3.52 trillion combinations, easily scaling across decades of global traffic.
+2. **Pre-Allocate Counter Ranges**: Use ZooKeeper to allocate unique ID ranges to application nodes, achieving zero-collision URL generation without lock contention.
+3. **Use 302 Redirects for Analytics**: Return HTTP 302 Temporary Redirects when click tracking and geo-analytics are required; return HTTP 301 Permanent Redirects to minimize server load.
+4. **Cache Hot Links at Edge**: Place Redis / CDN caches ahead of the database layer to serve 99% of read redirects with sub-10ms latency.

@@ -1,141 +1,165 @@
-# Module 22: Monolith to Microservices Migration, Strangler Fig Pattern, and Domain-Driven Design (DDD)
+# Module 22: Monolith to Microservices Migration & Strangler Fig Pattern
 
-## Overview
+## Theoretical Overview & Architectural Evolution
 
-Migrating a legacy **Monolithic Application** to a **Microservices Architecture** involves decomposing a single unified codebase and shared database into independently deployable, domain-isolated microservices.
+A **Monolith** bundles all application features, domain modules, and business logic into a single deployable code artifact and shared database.
 
-Executing a high-risk "Big-Bang Rewrite" frequently results in project failure. Instead, production migrations rely on the **Strangler Fig Pattern**, incrementally intercepting legacy monolithic routes and intercepting traffic to new microservices behind an **API Proxy/Gateway**.
-
-Understanding **Domain-Driven Design (DDD) Bounded Contexts**, **Database-per-Service Extraction**, and **Change Data Capture (CDC)** is essential.
-
----
-
-## 1. Monolith vs. Microservices Architectural Paradigm Comparison
+A **Microservice Architecture** decomposes an application into loosely coupled, independently deployable services organized around **Domain-Driven Design (DDD) Bounded Contexts**, where each service exclusively owns its data store.
 
 ```mermaid
 flowchart TD
-    subgraph 1. Monolithic Architecture
-        ClientA[Client] --> MonolithApp["Unified Monolithic Codebase<br/>(Order, User, Payment, Inventory Modules in 1 Process)"]
-        MonolithApp --> SingleDB[(Single Shared Relational Database)]
+    subgraph Monolithic Architecture
+        Client1["Client Request"] --> API1["Single Monolith Application Core"]
+        API1 --> SharedDB[("Shared Monolithic Database")]
     end
 
-    subgraph 2. Microservices Architecture (Bounded Contexts)
-        ClientB[Client] --> Gateway[API Gateway]
-        Gateway --> OrderSvc[Order Service]
-        Gateway --> UserSvc[User Service]
-        Gateway --> PaymentSvc[Payment Service]
-
-        OrderSvc --> OrderDB[(Order DB)]
-        UserSvc --> UserDB[(User DB)]
-        PaymentSvc --> PaymentDB[(Payment DB)]
+    subgraph Microservices Architecture (Strangler Fig Migration)
+        Client2["Client Request"] --> Gateway["API Proxy Router (Strangler Fig)"]
+        Gateway -->|Route /flights| FlightSvc["Flight Microservice"] --> FlightDB[("Flight DB")]
+        Gateway -->|Route /hotels| HotelSvc["Hotel Microservice"] --> HotelDB[("Hotel DB")]
+        Gateway -.->|Legacy Route /buses| Monolith["Hollowed Monolith"] --> LegacyDB[("Legacy DB")]
     end
-
-    style SingleDB fill:#fee2e2,stroke:#dc2626
-    style OrderDB fill:#dcfce7,stroke:#15803d
-    style UserDB fill:#dcfce7,stroke:#15803d
-    style PaymentDB fill:#dcfce7,stroke:#15803d
 ```
+
+### Real-World Case Study: MakeMyTrip Platform Evolution
+MakeMyTrip started as a single monolithic application handling flights, hotels, buses, and holidays:
+- **Monolith Bottleneck**: A bug fix in hotel pricing required redeploying the entire codebase, risking flight booking outages during holiday peak seasons.
+- **Strangler Fig Solution**: MakeMyTrip placed an API Gateway in front of the monolith and incrementally extracted domain services over 18 months until the legacy monolith was hollowed out and safely decommissioned.
 
 ---
 
-## 2. The Strangler Fig Incremental Migration Pattern
+## 1. Monolith vs. Microservices Architecture Matrix
 
-The **Strangler Fig Pattern** (named after the Australian strangler fig tree that grows around a host tree until it completely replaces it) places an interceptor proxy in front of the legacy monolith:
-
-```mermaid
-flowchart TD
-    ClientApp[Client Traffic] --> Proxy["Strangler Interceptor Proxy / API Gateway"]
-
-    Proxy -->|1. Un-migrated Legacy Traffic (/orders, /users)| Monolith["Legacy Monolithic Core"]
-    Proxy -->|2. Migrated Intercepted Route (/payments)| NewPaymentSvc["NEW Payment Microservice"]
-
-    Monolith -.->|Change Data Capture (CDC / Debezium)| NewPaymentSvc
-
-    style Proxy fill:#dbeafe,stroke:#1d4ed8
-    style NewPaymentSvc fill:#dcfce7,stroke:#15803d
-    style Monolith fill:#fef3c7,stroke:#b45309
-```
+| Dimension | Monolithic Architecture | Microservices Architecture |
+| :--- | :--- | :--- |
+| **Deployment Model** | Single artifact (All-or-Nothing). | **Independent service deployments**. |
+| **Data Ownership** | Single shared relational database. | **Database Per Service** (Encapsulated storage). |
+| **Scaling Profile** | Vertical or full-instance horizontal. | Fine-grained independent horizontal scaling. |
+| **Boundary Boundaries** | In-memory package modules. | Out-of-process HTTP/gRPC or Async Events. |
+| **Failure Blast Radius** | High (Crash in 1 module brings down entire app).| Low (Failure isolated to single microservice). |
 
 ---
 
-## 3. Database Migration Strategy: Database-per-Service & Change Data Capture (CDC)
+## 2. Domain-Driven Design (DDD) & Service Boundaries
 
-Decomposing a shared monolithic database into isolated microservice databases without downtime requires a multi-phase synchronization pipeline:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as Application Client
-    participant Proxy as Strangler API Gateway
-    participant Mono as Legacy Monolith & DB
-    participant CDC as Debezium CDC Pipeline
-    participant Micro as New Payment Microservice DB
-
-    note over Client,Micro: PHASE 1: DUAL WRITE / CDC DATA REPLICATION
-    Client->>Proxy: POST /api/payments
-    Proxy->>Mono: Write Payment to Monolith DB
-    Mono->>CDC: DB Write triggers WAL Change Event!
-    CDC->>Micro: Replicates record asynchronously to New Payment DB
-
-    note over Client,Micro: PHASE 2: TRAFFIC CUTOVER TO NEW MICROSERVICE
-    Proxy->>Proxy: Update Gateway Routing Rule for /api/payments -> New Microservice
-    Client->>Proxy: POST /api/payments
-    Proxy->>Micro: Route directly to New Payment Microservice! (Monolith bypassed)
-```
-
----
-
-## 4. Practical Implementation Showcase: Strangler Gateway Interceptor Router
+Defining wrong service boundaries creates a **Distributed Monolith**—the complexity of distributed systems combined with the tight coupling of a monolith.
 
 ```javascript
-class StranglerGatewayRouter {
-  constructor(legacyMonolithUrl) {
-    this.legacyMonolithUrl = legacyMonolithUrl;
-    this.migratedRouteRegistry = new Map(); // PathPrefix -> TargetMicroserviceUrl
+// Service Boundary Mapping by Bounded Context
+const boundedContexts = {
+  "Flight Domain": {
+    entities: ["Flight", "Seat", "Airline"],
+    events: ["FlightBooked", "FlightCancelled"],
+  },
+  "Hotel Domain": {
+    entities: ["Hotel", "Room", "Reservation"],
+    events: ["HotelBooked", "HotelCancelled"],
+  },
+  "Payment Domain": {
+    entities: ["Payment", "Refund", "Transaction"],
+    events: ["PaymentCompleted", "RefundIssued"],
+  },
+};
+```
+
+> [!RULE]
+> **DDD Boundary Rule**: If two modules share no core data entities and communicate exclusively via domain events (`FlightBooked`), they belong in distinct Bounded Contexts.
+
+---
+
+## 3. Strangler Fig Migration Pattern (`StranglerFigMigration`)
+
+The **Strangler Fig Pattern** migrates monolithic applications incrementally by placing a routing proxy in front of legacy systems, peeling off microservices domain by domain without system downtime.
+
+```mermaid
+flowchart LR
+    Phase0["Phase 0: 100% Monolith<br/>Proxy routes all traffic to Monolith"] --> Phase1["Phase 1: 25% Microservices<br/>Extract Flight Service; Proxy routes /flights"]
+    Phase1 --> Phase2["Phase 2: 75% Microservices<br/>Extract Hotel Service; Proxy routes /hotels"]
+    Phase2 --> Phase3["Phase 3: 100% Microservices<br/>Monolith hollowed out & decommissioned"]
+```
+
+```javascript
+class StranglerFigMigration {
+  constructor() {
+    this.monolith = new MonolithApp();
+    this.flightService = new FlightService();
+    this.hotelService = new HotelService();
+    this.routingTable = { flights: "monolith", hotels: "monolith", buses: "monolith" };
   }
 
-  // Register newly extracted microservice route
-  registerMigratedRoute(pathPrefix, targetMicroserviceUrl) {
-    this.migratedRouteRegistry.set(pathPrefix, targetMicroserviceUrl);
-    console.log(`📌 [MIGRATED ROUTE REGISTERED] '${pathPrefix}' -> ${targetMicroserviceUrl}`);
-  }
-
-  // Route incoming request
-  interceptAndRoute(requestPath) {
-    console.log(`\n🔍 [INCOMING REQUEST] Path: '${requestPath}'`);
-
-    for (const [prefix, serviceUrl] of this.migratedRouteRegistry.entries()) {
-      if (requestPath.startsWith(prefix)) {
-        console.log(`  ✓ [STRANGLER INTERCEPTED] Routing '${requestPath}' to NEW Microservice at ${serviceUrl}`);
-        return { target: serviceUrl, type: "MICROSERVICE" };
-      }
+  route(domain, payload) {
+    const target = this.routingTable[domain];
+    if (target === "microservice") {
+      if (domain === "flights") return this.flightService.execute(payload);
+      if (domain === "hotels") return this.hotelService.execute(payload);
     }
+    // Fallback to legacy monolith
+    return this.monolith.execute(domain, payload);
+  }
 
-    console.log(`  ➔ [FALLBACK TO MONOLITH] Routing '${requestPath}' to Legacy Monolith at ${this.legacyMonolithUrl}`);
-    return { target: this.legacyMonolithUrl, type: "MONOLITH" };
+  migrateDomain(domain) {
+    this.routingTable[domain] = "microservice"; // Toggle routing dynamically
   }
 }
-
-// Execution Demonstration
-const gateway = new StranglerGatewayRouter("http://monolith-legacy.internal:8080");
-
-// Phase 1: All routes go to monolith
-gateway.interceptAndRoute("/api/v1/users/101");
-gateway.interceptAndRoute("/api/v1/payments/charge");
-
-// Phase 2: Cut over Payments to newly deployed Payment Microservice
-gateway.registerMigratedRoute("/api/v1/payments", "http://payment-service.internal:3000");
-
-gateway.interceptAndRoute("/api/v1/users/101");      // Reroutes to Legacy Monolith
-gateway.interceptAndRoute("/api/v1/payments/charge"); // Intercepted by New Payment Microservice!
 ```
 
 ---
 
-## Key Production Takeaways
+## 4. Shared Database Anti-Pattern vs. Database Per Service
 
-1. **Never Perform Big-Bang Monolith Rewrites**: Always use the **Strangler Fig Pattern** to incrementally extract single domain modules one microservice at a time behind an API Gateway proxy.
-2. **Enforce Database-per-Service Ownership**: Never allow multiple microservices to connect directly to the same database tables. Each microservice must strictly encapsulate its own database schema.
-3. **Use Domain-Driven Design (DDD) to Define Bounded Contexts**: Identify microservice boundaries by grouping business domain capabilities that change together (e.g. Order Context, Inventory Context) into explicit Bounded Contexts.
-4. **Leverage Change Data Capture (CDC) for Sync During Cutover**: Use CDC tools like Debezium and Kafka to replicate database changes from the legacy monolith to new microservice databases during live migration phases.
+```mermaid
+flowchart TD
+    subgraph Anti-Pattern: Shared Database
+        ServiceA["Flight Service"] --> SharedDB[("Shared DB: 'bookings' Table")]
+        ServiceB["Hotel Service"] --> SharedDB
+        Note over SharedDB: Schema change by Team A breaks Team B!
+    end
 
+    subgraph Recommended Pattern: Database Per Service
+        SvcA["Flight Service"] --> DBA[("Flight DB (PostgreSQL)")]
+        SvcB["Hotel Service"] --> DBB[("Hotel DB (MongoDB)")]
+        SvcA -.->|Async Event| SvcB
+    end
+```
+
+### Why Shared Database Fails in Microservices
+1. **Tight Coupling**: Schema migrations in one service break independent deployments in sibling services.
+2. **Loss of Encapsulation**: Domain entities can be directly mutated by external SQL queries bypassing domain business rules.
+3. **No Polyglot Optimizations**: Prevents services from using optimal database paradigms (e.g., MongoDB for document catalogs, Redis for caching).
+
+---
+
+## 5. Inter-Service Communication Patterns
+
+```javascript
+class AsyncEventBus {
+  constructor() { this.subscribers = {}; }
+
+  subscribe(topic, serviceName, handlerFn) {
+    if (!this.subscribers[topic]) this.subscribers[topic] = [];
+    this.subscribers[topic].push({ serviceName, handlerFn });
+  }
+
+  publish(topic, eventData) {
+    (this.subscribers[topic] || []).forEach((sub) => sub.handlerFn(eventData));
+  }
+}
+```
+
+---
+
+## 6. Incremental Migration Roadmap (4-Phase Strategy)
+
+1. **Phase 0: Foundation (Months 1–2)**: Map domain bounded contexts, establish CI/CD automation, and deploy API Gateway routing layer.
+2. **Phase 1: First Extraction (Months 3–4)**: Extract the least-coupled domain (e.g., Notifications or User Profiles) with its own database and toggle Gateway routing.
+3. **Phase 2: Core Migration (Months 5–12)**: Peeling off primary business domains (Flights, Hotels) using event-driven communication.
+4. **Phase 3: Decommissioning (Month 12+)**: Verify 0% traffic hits legacy monolith routes and decommission legacy database infrastructure.
+
+---
+
+## Key Takeaways
+
+1. **Start Monolithic**: Build early applications as monoliths until team size or scaling complexity requires decomposition.
+2. **Adopt Strangler Fig**: Never rewrite large production applications from scratch; use the Strangler Fig pattern for zero-downtime incremental migration.
+3. **Enforce Database Per Service**: Eliminate shared databases to preserve independent service deployments and domain encapsulation.
+4. **Use Async Events for Commands**: Use synchronous REST/gRPC for queries and asynchronous event streams for state mutation commands across services.

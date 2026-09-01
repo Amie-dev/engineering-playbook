@@ -1,171 +1,203 @@
-# Module 10: Database Replication Architecture, Failover Mechanics, and Consistency Anomalies
+# Module 10: Database Replication Architecture, Failover, & Consistency Models
 
-## Overview
+## Theoretical Overview & Architecture Intuition
 
-**Database Replication** maintains copies of data across multiple physically separate database nodes connected by a network. Replication provides **High Availability** (surviving node hardware crashes), **Fault Tolerance**, **Disaster Recovery**, and **Read Throughput Scaling**.
-
-Understanding **Replication Topologies (Single-Leader, Multi-Leader, Leaderless Dynamo-Style)**, **Synchronous vs. Semi-Synchronous vs. Asynchronous Replication**, **Replication Lag Anomalies (Read-Your-Own-Writes, Monotonic Reads)**, and **Automatic Leader Failover & Split-Brain Prevention** is essential.
-
----
-
-## 1. Replication Topology Architectural Taxonomy
+**Database Replication** is the process of copying data across multiple physical database servers (nodes) to achieve fault tolerance, high availability, and read scalability.
 
 ```mermaid
 flowchart TD
-    subgraph 1. Single-Leader / Primary-Replica Architecture
-        Writes1[Client Writes] --> Primary["Primary Leader Node<br/>(Handles all INSERT/UPDATE/DELETE)"]
-        Primary -->|WAL Log Sync| R1["Read Replica 1"]
-        Primary -->|WAL Log Async| R2["Read Replica 2"]
-        Reads1[Client Reads] --> R1 & R2
-    end
-
-    subgraph 2. Multi-Leader Architecture
-        W1[Client Writes DC-East] --> LeaderA["Leader Node (DC-East)"]
-        W2[Client Writes DC-West] --> LeaderB["Leader Node (DC-West)"]
-        LeaderA <-->|Cross-DC Async Sync + Conflict Resolution| LeaderB
-    end
-
-    subgraph 3. Leaderless / Dynamo-Style Architecture
-        W3[Client Writes / Reads] --> NodeA["Node A"] & NodeB["Node B"] & NodeC["Node C"]
-        note3["Quorum Reads/Writes: W + R > N"]
-    end
-
-    style Primary fill:#dcfce7,stroke:#15803d
-    style LeaderA fill:#dbeafe,stroke:#1d4ed8
-    style LeaderB fill:#dbeafe,stroke:#1d4ed8
+    ClientWrite["Write Request (UPDATE balance)"] --> Primary["Primary Database Node (Mumbai HQ)"]
+    Primary -->|1. Append WAL Log| LocalWAL[("Primary WAL Disk")]
+    
+    Primary -->|2a. Synchronous Sync| SyncReplica["Sync Replica (Delhi)"]
+    Primary -.->|2b. Asynchronous Replication (Replication Lag)| AsyncReplica["Async Replica (Varanasi)"]
+    
+    ClientRead["Read Requests (SELECT)"] --> Router["Replica Load Balancer"]
+    Router --> SyncReplica
+    Router --> AsyncReplica
 ```
 
-### Replication Topology Comparison Matrix
-
-| Replication Topology | Write Endpoint | Read Endpoint | Primary Advantage | Main Architectural Challenge |
-| :--- | :--- | :--- | :--- | :--- |
-| **Single-Leader** | Single Primary Node | All Read Replicas | Simple, zero write conflicts | Primary node is a write bottleneck & SPOF |
-| **Multi-Leader** | Any Regional Leader Node | Any Regional Replica | Cross-datacenter write speed | Complex **Write Conflict Resolution** (LWW, CRDTs) |
-| **Leaderless (Dynamo)**| Any $W$ nodes in cluster | Any $R$ nodes in cluster | High availability & zero leader failover | Requires **Quorum Math** ($W + R > N$) & Anti-Entropy |
+### Real-World Case Study: SBI Core Banking System
+State Bank of India (SBI) processes over **100 million transactions daily** across 22,000 branches:
+- **Primary Node (Mumbai HQ)**: Accepts all account balance mutations and ledger updates.
+- **Read Replicas (Regional Offices)**: Serve branch balance inquiries locally. A deposit in Varanasi updates the local branch instantly, while the Mumbai Primary syncs via WAL logs within seconds.
 
 ---
 
-## 2. Replication Synchronization Modes & Failover Sequence
+## 1. Replication Topologies Matrix
+
+| Topology Mode | Write Path | Read Path | Fault Tolerance | Primary Bottleneck / Risk |
+| :--- | :--- | :--- | :--- | :--- |
+| **Single-Leader (Primary-Replica)**| All writes directed to **1 Primary**. | Distributed across **$N$ Read Replicas**. | High (Promote replica if Primary fails). | Primary write throughput limit. |
+| **Multi-Master (Active-Active)** | Writes accepted at **Any Master Node**. | Local read execution at nearest master. | Ultra-High (Zero downtime per region). | **Write Conflicts** (Requires LWW or CRDTs). |
+| **Leaderless (Dynamo-Style)** | Writes sent to $W$ quorum nodes. | Reads sent to $R$ quorum nodes. | Maximum (No single primary exists). | Complex client conflict resolution. |
+
+---
+
+## 2. Synchronous vs. Asynchronous Replication
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Application Client
-    participant Primary as Primary Leader Node
-    participant SyncR as Synchronous Replica
-    participant AsyncR as Asynchronous Replica
+    participant App as Application Client
+    participant Primary as Primary DB (Mumbai)
+    participant SyncRep as Sync Replica (Delhi)
+    participant AsyncRep as Async Replica (Varanasi)
 
-    note over Client,AsyncR: SEMI-SYNCHRONOUS REPLICATION STREAM
-    Client->>Primary: UPDATE user SET status = 'ACTIVE'
-    Primary->>SyncR: Replicate WAL Log Segment
-    Primary->>AsyncR: Replicate WAL Log Segment (Async)
-    SyncR-->>Primary: ACK (WAL Written to Replica Disk)
-    Primary-->>Client: Transaction Committed ACK! (Guaranteed 0 Data Loss)
-    AsyncR-->>Primary: ACK (Flushed asynchronously seconds later)
-
-    note over Primary,SyncR: AUTOMATIC LEADER FAILOVER ON PRIMARY CRASH
-    note over Primary: Primary Crashes! (Heartbeat Times Out)
-    SyncR->>SyncR: Consensus Health Check triggers Promotion Election!
-    SyncR->>SyncR: Promotes Sync Replica to NEW Primary Leader
-    SyncR-->>Client: Directs future writes to NEW Primary Leader!
+    App->>Primary: 1. Write Transaction (Deposit Rs 10,000)
+    Primary->>SyncRep: 2. Replicate WAL Entry
+    SyncRep-->>Primary: 3. ACK (WAL Persisted)
+    Primary-->>App: 4. Transaction Committed (2ms Sync Latency)
+    
+    Note over Primary,AsyncRep: 5. Async Replication Stream (Replication Lag Window)
+    Primary-.->AsyncRep: 6. Replicate WAL Entry (Delayed by 500ms)
 ```
+
+| Parameter | Synchronous Replication | Asynchronous Replication |
+| :--- | :--- | :--- |
+| **Write Latency** | High (Writes wait for $N$ replica ACKs). | **Low ($\approx 1\text{ ms}$)** (ACK returns on Primary commit). |
+| **Data Loss Risk** | **Zero Data Loss** (RPO = 0). | Possible data loss during Primary crash (RPO > 0). |
+| **Replica Availability**| Blocked if a synchronous replica goes offline. | Writes succeed even if all replicas are down. |
 
 ---
 
-## 3. Replication Lag Consistency Anomalies & Mitigations
+## 3. Replication Lag & Consistent Read Guarantee Patterns
 
-When using asynchronous read replicas, network propagation delays introduce **Replication Lag**, leading to consistency anomalies:
+When using asynchronous replication, **Replication Lag** can cause stale reads (e.g., a user deposits money, refreshes the page, and sees their old balance).
 
-```mermaid
-flowchart TD
-    LagAnomalies[Replication Lag Consistency Anomalies] --> A1{Anomaly Type?}
-
-    A1 -- "1. Stale Read After Update" --> R1["Read-Your-Own-Writes Violation<br/>User submits comment, reloads page, comment disappears!"]
-    R1 --> S1["Mitigation: Read from Primary for 10s after write,<br/>or track client transaction timestamp"]
-
-    A1 -- "2. Time-Travel Reads" --> R2["Monotonic Reads Violation<br/>User reads from Replica 1 (updated), refreshes, hits Replica 2 (lagging)"]
-    R2 --> S2["Mitigation: Sticky Replica Routing<br/>Pin user session to 1 specific read replica"]
-
-    A1 -- "3. Causality Reversal" --> R3["Consistent Prefix Reads Violation<br/>Observer sees answer before question due to out-of-order replication"]
-    R3 --> S3["Mitigation: Write causally dependent data to same partition"]
-
-    style S1 fill:#dcfce7,stroke:#15803d
-    style S2 fill:#dbeafe,stroke:#1d4ed8
-```
-
----
-
-## 4. Practical Implementation Showcase: Primary-Replica Engine with Lag Simulation
+### Read-Your-Writes Consistency Engine (`ReplicaRouter`)
+Tracks recent writers by User ID. If a user wrote within 5 seconds, route their reads directly to the **Primary**; otherwise, route to **Read Replicas**:
 
 ```javascript
-class PrimaryReplicaDatabaseEngine {
-  constructor() {
-    this.primary = new Map();
-    this.replicas = [
-      { id: 1, store: new Map(), lagMs: 10 },  // Replica 1 (Fast: 10ms lag)
-      { id: 2, store: new Map(), lagMs: 500 }  // Replica 2 (Lagging: 500ms lag)
-    ];
+class ReplicaRouter {
+  constructor(primary, replicas) {
+    this.primary = primary;
+    this.replicas = replicas;
+    this.recentWriters = new Map();
+    this.rr = 0;
   }
 
-  // Primary Write Handler
-  async write(key, value) {
-    console.log(`⚡ [PRIMARY WRITE] Executing UPDATE ${key} = "${value}"`);
-    this.primary.set(key, value);
-
-    // Asynchronous Replication Log Stream
-    this.replicas.forEach((replica) => {
-      setTimeout(() => {
-        replica.store.set(key, value);
-        console.log(`  ✓ [REPLICA ${replica.id} REPLICATED] Key '${key}' updated after ${replica.lagMs}ms`);
-      }, replica.lagMs);
-    });
+  write(key, val, userId) {
+    this.primary.write(key, val);
+    this.recentWriters.set(userId, Date.now()); // Record write timestamp
   }
 
-  // Read Handler with Read-Your-Own-Writes Guard
-  async read(key, userLastWriteTimestamp = 0) {
-    const timeSinceLastWrite = Date.now() - userLastWriteTimestamp;
-
-    // READ-YOUR-OWN-WRITES GUARD: If written within last 2 seconds, force read from Primary!
-    if (timeSinceLastWrite < 2000) {
-      console.log(`🛡 [READ-YOUR-OWN-WRITES GUARD] Reading '${key}' directly from PRIMARY (Bypassing Replicas)`);
-      return this.primary.get(key);
+  read(key, userId) {
+    const lastWrite = this.recentWriters.get(userId);
+    // Guarantee Read-Your-Writes consistency if written recently
+    if (lastWrite && Date.now() - lastWrite < 5000) {
+      return this.primary.read(key);
     }
-
-    // Otherwise, load balance read across replicas
-    const replica = this.replicas[Math.floor(Math.random() * this.replicas.length)];
-    console.log(`📖 [REPLICA READ] Reading '${key}' from Replica #${replica.id}`);
-    return replica.store.get(key);
+    // Otherwise, route to healthy read replicas in round-robin order
+    const healthy = this.replicas.filter((r) => r.healthy);
+    const replica = healthy[this.rr++ % healthy.length];
+    return replica.read(key);
   }
 }
-
-// Execution Simulation
-async function runReplicationDemo() {
-  const db = new PrimaryReplicaDatabaseEngine();
-  
-  const writeTime = Date.now();
-  await db.write("profile:101", "Priya Sharma");
-
-  // Immediate Read (Triggers Read-Your-Own-Writes Guard -> Reads Primary)
-  const valImmediate = await db.read("profile:101", writeTime);
-  console.log(`Result Immediate: "${valImmediate}"`);
-
-  // Wait 600ms for replicas to sync
-  await new Promise((r) => setTimeout(r, 600));
-
-  // Eventual Read (Reads from Replica safely)
-  const valLater = await db.read("profile:101", writeTime - 3000);
-  console.log(`Result Later    : "${valLater}"`);
-}
-
-runReplicationDemo();
 ```
 
 ---
 
-## Key Production Takeaways
+## 4. Automatic Failover Engine (`FailoverMgr`)
 
-1. **Use Semi-Synchronous Replication for Zero Data Loss**: Configure at least 1 synchronous replica alongside asynchronous read replicas to ensure committed transactions survive primary node hardware failures.
-2. **Implement Read-Your-Own-Writes Guarantees**: Route read queries directly to the Primary database node for 5-10 seconds following a client write operation to prevent users from seeing stale state.
-3. **Prevent Split-Brain with Quorum Consensus**: Configure failover orchestrators (e.g. Patroni, Orchestrator, Raft consensus) to require strict majority node agreement before promoting a new leader, avoiding multiple nodes accepting writes simultaneously.
-4. **Monitor Replication Lag Metrics**: Set up real-time Prometheus/Datadog alerts on Postgres `pg_stat_replication` byte lag or MySQL `Seconds_Behind_Master` to automatically drop lagging replicas from read pools.
+When the primary database fails, a monitoring process detects the outage and automatically promotes the replica with the **highest WAL log position** (`walPos`).
 
+```javascript
+class FailoverMgr {
+  constructor(cluster) {
+    this.cluster = cluster;
+    this.missedHeartbeats = 0;
+    this.threshold = 3;
+  }
+
+  heartbeat() {
+    if (this.cluster.primary.healthy) {
+      this.missedHeartbeats = 0;
+      return "HEALTHY";
+    }
+    this.missedHeartbeats++;
+    if (this.missedHeartbeats >= this.threshold) {
+      return this.executeFailover();
+    }
+    return "DEGRADED";
+  }
+
+  executeFailover() {
+    // Select healthy replica with the most up-to-date WAL position
+    const bestReplica = this.cluster.replicas
+      .filter((r) => r.healthy)
+      .sort((a, b) => b.walPos - a.walPos)[0];
+
+    if (!bestReplica) return "CRITICAL_FAILOVER_ERROR";
+
+    // Promote best replica to Primary
+    bestReplica.role = "primary";
+    this.cluster.primary = bestReplica;
+    this.cluster.replicas = this.cluster.replicas.filter((r) => r !== bestReplica);
+    return "FAILOVER_COMPLETED";
+  }
+}
+```
+
+---
+
+## 5. Multi-Master Conflict Resolution (Last-Write-Wins)
+
+When multiple master nodes accept writes for the same key simultaneously, conflicts arise. **Last-Write-Wins (LWW)** resolves conflicts by selecting the payload with the highest physical or logical timestamp.
+
+```javascript
+class MultiMaster {
+  constructor(name) {
+    this.name = name;
+    this.data = new Map();
+    this.versions = new Map();
+  }
+
+  receiveWrite(key, val, timestamp, originNode) {
+    const local = this.versions.get(key);
+    // LWW Rule: Compare incoming timestamp vs local timestamp
+    if (!local || timestamp > local.ts || (timestamp === local.ts && originNode > local.origin)) {
+      this.data.set(key, val);
+      this.versions.set(key, { ts: timestamp, origin: originNode });
+      return "ACCEPTED_LWW";
+    }
+    return "REJECTED_STALE";
+  }
+}
+```
+
+---
+
+## 6. Split-Brain Prevention & Quorum Fencing
+
+**Split-Brain** occurs when a network partition separates a cluster, causing two isolated groups to both promote a local primary and accept conflicting writes.
+
+```mermaid
+flowchart LR
+    subgraph Group 1 (Majority Quorum - 3/5 Nodes)
+        P1["New Primary (Mumbai)"]
+        N2["Node 2 (Delhi)"]
+        N3["Node 3 (Chennai)"]
+    end
+
+    subgraph Group 2 (Minority Partition - 2/5 Nodes)
+        OldP["Old Primary (FENCED)"]
+        N5["Node 5 (Kolkata)"]
+    end
+
+    Partition["Network Partition Line"] -.-> Group1
+    Partition -.-> Group2
+```
+
+### Prevention Rules
+1. **Majority Quorum**: Requiring a strict majority ($Q = \lfloor N/2 \rfloor + 1$) for leader election. Group 2 (2/5 nodes) cannot form a quorum and refuses writes.
+2. **Fencing Tokens**: Incremental tokens (`fenceToken`) passed to storage layers; writes with old tokens are rejected.
+
+---
+
+## Key Takeaways
+
+1. **Primary Handles Writes**: Single-leader architectures concentrate writes on one primary node while scaling reads across replicas.
+2. **Sync vs Async Trade-off**: Synchronous replication guarantees zero data loss at the cost of higher write latency; Asynchronous replication optimizes latency at the risk of a failover data loss window.
+3. **Read-Your-Writes Consistency**: Route users who recently modified data back to the primary database to bypass replication lag stale reads.
+4. **Prevent Split-Brain with Quorums**: Enforce majority node quorums and fencing tokens during failover elections.

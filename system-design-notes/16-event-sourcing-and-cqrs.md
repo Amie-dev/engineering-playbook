@@ -1,180 +1,213 @@
-# Module 16: Event Sourcing, CQRS Architecture, and Read Projection Engines
+# Module 16: Event Sourcing, CQRS Pattern, & Event Store Architecture
 
-## Overview
+## Theoretical Overview & State Rebuild Philosophy
 
-Traditional application architectures update database state in-place using CRUD (`UPDATE users SET status = 'ACTIVE'`). In contrast, **Event Sourcing** persists every application state change as an immutable sequence of historical domain events (`UserRegistered`, `UserEmailVerified`, `SubscriptionUpgraded`).
+Traditional CRUD applications update database records in-place (`UPDATE bookings SET status = 'CANCELLED'`), destroying historical context.
 
-Combining Event Sourcing with **CQRS (Command Query Responsibility Segregation)** splits Write operations (**Commands**) from Read operations (**Queries**), allowing Write models (Append-Only Event Log) and Read models (Denormalized Materialized Views) to scale independently.
-
-Understanding **Event Store Replaying**, **Snapshotting Mechanics**, and **Asynchronous Read Projections** is essential.
-
----
-
-## 1. CQRS & Event Sourcing System Topology
+**Event Sourcing** models state transitions as an **append-only sequence of immutable events** stored inside an **Event Store**. Current state is never stored directly—it is calculated dynamically by **replaying** events through a **Projection**.
 
 ```mermaid
 flowchart TD
-    subgraph Command / Write Side (Write Model)
-        ClientCommand[Client Write Action] -->|1. Transmit Command| CmdAPI[Command API Handler]
-        CmdAPI -->|2. Validate Domain Rules| Aggregate[Domain Aggregate Root]
-        Aggregate -->|3. Append Immutable Event| EventStore[(Append-Only Event Store Log)]
+    subgraph Write Path (Commands & Event Store)
+        Cmd["Command: Initiate Booking PNR-4512"] --> CmdHandler["Command Handler"]
+        CmdHandler -->|Append Event| ES[("Append-Only Event Store Log")]
+        ES --> Evt1["1. BookingInitiated"]
+        ES --> Evt2["2. SeatAllocated"]
+        ES --> Evt3["3. PaymentProcessed"]
+        ES --> Evt4["4. BookingConfirmed"]
     end
 
-    subgraph Event Projection Engine
-        EventStore -->|4. Stream Event Log| Projector[Async Read Model Projector]
-        Projector -->|5. Update Materialized Views| ReadDB[(Read-Optimized Database / Elastic)]
+    subgraph Read Path (Projections & Read Models)
+        ES -.->|Publish Stream| Proj["Projection Processor"]
+        Proj --> ReadModel[("Optimized Read DB / Materialized View")]
+        ClientQuery["Query: GET /api/pnr/4512"] --> ReadModel
     end
-
-    subgraph Query / Read Side (Read Model)
-        ClientQuery[Client Read Query] -->|6. Fast Read Query| QueryAPI[Query API Handler]
-        QueryAPI --> ReadDB
-    end
-
-    style EventStore fill:#dcfce7,stroke:#15803d
-    style ReadDB fill:#dbeafe,stroke:#1d4ed8
 ```
 
----
-
-## 2. Event Replaying & Snapshotting Mechanics
-
-Rebuilding state for aggregates with thousands of historical events by replaying from event zero becomes CPU-intensive. **Snapshotting** periodically captures an aggregate's current state (e.g. every 100 events), allowing state reconstruction to start from the latest snapshot:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor App as Bank Account Aggregate
-    participant Store as Event Store Log
-    participant Snap as Snapshot Store
-
-    note over App,Snap: STATE RECONSTRUCTION FROM SNAPSHOT
-    App->>Snap: 1. Fetch latest snapshot for Account #101
-    Snap-->>App: Returns Snapshot (Event Version 500, Balance $12,500)
-    
-    App->>Store: 2. Fetch events matching Account #101 WHERE Version > 500
-    Store-->>App: Returns Events 501-505 (Deposits & Withdrawals)
-    
-    App->>App: 3. Replay ONLY 5 events onto Snapshot
-    note over App: Rebuilt Current State: Version 505, Balance $13,200 (In <1ms!)
-```
+### Real-World Case Study: IRCTC Booking Ledger
+Every transaction step on IRCTC—searching trains, holding seats, processing UPI payments, issuing PNR confirmations, and submitting cancellation refunds—is appended as an immutable event.
+- **Auditability**: Complete audit trails resolve customer disputes.
+- **Time Travel**: Engineers can reconstruct exact system state at 10:01:05 AM during Tatkal surges.
 
 ---
 
-## 3. Command Side vs. Query Side Comparison
+## 1. CRUD vs. Event Sourcing vs. CQRS Comparison
 
-| Architectural Dimension | Command Side (Write Model) | Query Side (Read Model) |
-| :--- | :--- | :--- |
-| **Primary Goal** | Protect domain invariants & append events | Deliver ultra-fast, pre-computed query responses |
-| **Data Storage Engine** | Append-Only Log (EventStoreDB, Kafka, Postgres WAL) | Document/Search/Cache (Elasticsearch, Redis, Postgres) |
-| **Schema Normalization**| Normalized Event Schema | **Denormalized Flat Materialized Views** |
-| **Data Modification** | `INSERT` Only (Immutable Append) | Asynchronous Bulk Invalidation / Updates |
-| **Scaling Pattern** | Scales with write transaction volume | Scales independently with read query volume |
+| Dimension | Traditional CRUD | Event Sourcing | CQRS (Command Query Responsibility Segregation) |
+| :--- | :--- | :--- | :--- |
+| **Data Mutation** | In-place update (`UPDATE / DELETE`). | **Append-Only** (`INSERT` immutable events). | Separates Command writes from Query reads. |
+| **Historical Data** | Lost upon overwrite. | **Fully preserved** indefinitely. | Maintained via immutable event streams. |
+| **Read/Write Scaling**| Tight coupling (Same DB schema). | Read side requires replaying events. | **Independent Scaling** (Optimum Write DB + Read DB). |
+| **Auditability** | Requires manual trigger tables. | Built-in by architecture design. | Built-in via event store logs. |
 
 ---
 
-## 4. Practical Implementation Showcase: Event Sourced Bank Account with CQRS Projections
+## 2. Event Store & State Replay Engine
 
 ```javascript
-// 1. Immutable Event Definitions
-class AccountAggregate {
-  constructor(id) {
-    this.id = id;
-    this.balance = 0;
-    this.version = 0;
-  }
-
-  // Replay event onto aggregate state
-  apply(event) {
-    switch (event.type) {
-      case "ACCOUNT_CREATED":
-        this.balance = event.data.initialDeposit;
-        break;
-      case "FUNDS_DEPOSITED":
-        this.balance += event.data.amount;
-        break;
-      case "FUNDS_WITHDRAWN":
-        if (this.balance < event.data.amount) {
-          throw new Error("Insufficient funds!");
-        }
-        this.balance -= event.data.amount;
-        break;
-    }
-    this.version = event.version;
-  }
-}
-
-// 2. CQRS Event Store & Read Projection Manager
-class CQRSStore {
+class EventStore {
   constructor() {
-    this.eventStoreLog = []; // Append-only log
-    this.readModelView = new Map(); // Denormalized Read DB
+    this.events = [];
+    this.subscribers = [];
+    this.seq = 0;
   }
 
-  // Command Write Side
-  async appendEvent(aggregateId, eventType, data) {
-    const nextVersion = this.eventStoreLog.filter((e) => e.aggregateId === aggregateId).length + 1;
-    
+  append(streamId, eventType, data) {
     const event = {
-      eventId: `evt_${Date.now()}_${nextVersion}`,
-      aggregateId,
-      type: eventType,
-      version: nextVersion,
+      seq: ++this.seq,
+      streamId,
+      eventType,
       data,
-      timestamp: new Date().toISOString()
+      metadata: { timestamp: Date.now(), version: 1 },
     };
-
-    this.eventStoreLog.push(event);
-    console.log(`⚡ [EVENT APPENDED] ${event.type} (Ver ${event.version}) for ID ${aggregateId}`);
-
-    // Trigger Async Read Model Projection Update
-    await this._updateReadProjection(event);
+    this.events.push(event);
+    this.subscribers.forEach((fn) => fn(event));
+    return event;
   }
 
-  // Query Read Side (Denormalized Materialized Projection)
-  async _updateReadProjection(event) {
-    let readRecord = this.readModelView.get(event.aggregateId) || { id: event.aggregateId, balance: 0, lastUpdated: "" };
-
-    if (event.type === "ACCOUNT_CREATED") readRecord.balance = event.data.initialDeposit;
-    else if (event.type === "FUNDS_DEPOSITED") readRecord.balance += event.data.amount;
-    else if (event.type === "FUNDS_WITHDRAWN") readRecord.balance -= event.data.amount;
-
-    readRecord.lastUpdated = event.timestamp;
-    this.readModelView.set(event.aggregateId, readRecord);
-    console.log(`  ✓ [READ PROJECTION UPDATED] ID ${event.aggregateId} -> Balance: $${readRecord.balance}`);
-  }
-
-  // Query Handler (Instant O(1) Read)
-  getAccountReadModel(aggregateId) {
-    return this.readModelView.get(aggregateId) || null;
-  }
+  getStream(streamId) { return this.events.filter((e) => e.streamId === streamId); }
 }
 
-// Execution Demonstration
-async function runCQRSDemo() {
-  const cqrs = new CQRSStore();
+class BookingProjection {
+  constructor() { this.state = {}; }
 
-  // Execute Commands
-  await cqrs.appendEvent("ACC_9910", "ACCOUNT_CREATED", { initialDeposit: 1000 });
-  await cqrs.appendEvent("ACC_9910", "FUNDS_DEPOSITED", { amount: 500 });
-  await cqrs.appendEvent("ACC_9910", "FUNDS_WITHDRAWN", { amount: 200 });
+  apply(event) {
+    const pnr = event.streamId;
+    if (!this.state[pnr]) this.state[pnr] = { pnr, status: "UNKNOWN", history: [] };
+    const b = this.state[pnr];
 
-  // Execute Query against Denormalized Read View
-  const readView = cqrs.getAccountReadModel("ACC_9910");
-  console.log("\n=== READ MODEL RESULT ===");
-  console.log(`Account ID   : ${readView.id}`);
-  console.log(`Current Bal  : $${readView.balance}`);
-  console.log(`Last Updated : ${readView.lastUpdated}`);
+    switch (event.eventType) {
+      case "BookingInitiated": Object.assign(b, event.data); b.status = "INITIATED"; break;
+      case "SeatAllocated": b.coach = event.data.coach; b.seat = event.data.seat; b.status = "SEAT_ALLOCATED"; break;
+      case "PaymentProcessed": b.amountPaid = event.data.amount; b.status = "PAYMENT_DONE"; break;
+      case "BookingConfirmed": b.status = "CONFIRMED"; break;
+      case "BookingCancelled": b.status = "CANCELLED"; b.refundAmount = event.data.refundAmount; break;
+    }
+    b.history.push({ event: event.eventType, timestamp: event.metadata.timestamp });
+    return b;
+  }
+
+  replayAll(events) {
+    this.state = {};
+    events.forEach((e) => this.apply(e));
+    return this.state;
+  }
 }
-
-runCQRSDemo();
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Performance Checkpoints via Snapshots
 
-1. **Use Event Sourcing when Auditing & Time-Travel Debugging are Essential**: Event Sourcing preserves complete, un-mutable historical record of all domain changes, making it ideal for financial ledgers, healthcare records, and legal compliance.
-2. **Implement Snapshotting to Avoid Long Replay Times**: Store aggregate state snapshots every 100-500 events to prevent cold state restoration from stalling application threads on old aggregates.
-3. **Handle Eventual Consistency on the Read Side**: In CQRS, the read model updates asynchronously after the event store write. Ensure client UIs accommodate temporary 100-300ms projection lag using optimistic UI updates.
-4. **Treat Event Log Schemas as Immutable**: Never alter past event schemas. Implement forward-compatible event versioning or event upcasting (`UserRegistered_v1` to `UserRegistered_v2`) to maintain backwards compatibility.
+Replaying millions of historical events to compute current state becomes a bottleneck. **Snapshots** periodically checkpoint current state so replays start from the latest snapshot rather than sequence 0.
 
+```mermaid
+flowchart LR
+    Seq0["Event 1"] --> Seq2["Event 2"] --> Snap["Snapshot Checkpoint (Seq 1000)"]
+    Snap --> Seq1001["Event 1001"] --> Seq1002["Event 1002"]
+    
+    Rebuild["Rebuild Request"] -->|Skip Events 1-1000!| LoadSnap["Load Snapshot (Seq 1000)"]
+    LoadSnap --> ReplayDiff["Replay 2 New Events (1001-1002)"]
+```
+
+```javascript
+class SnapshotStore {
+  constructor(eventStore) {
+    this.eventStore = eventStore;
+    this.snapshots = {};
+  }
+
+  takeSnapshot(streamId) {
+    const events = this.eventStore.getStream(streamId);
+    const proj = new BookingProjection();
+    events.forEach((e) => proj.apply(e));
+    this.snapshots[streamId] = {
+      state: JSON.parse(JSON.stringify(proj.getState(streamId))),
+      lastSeq: events[events.length - 1].seq,
+    };
+  }
+
+  rebuildFromSnapshot(streamId) {
+    const snapshot = this.snapshots[streamId];
+    const proj = new BookingProjection();
+    if (snapshot) {
+      proj.state[streamId] = JSON.parse(JSON.stringify(snapshot.state));
+      // Replay only un-checkpointed events!
+      const newEvents = this.eventStore.getStream(streamId).filter((e) => e.seq > snapshot.lastSeq);
+      newEvents.forEach((e) => proj.apply(e));
+    }
+    return proj.getState(streamId);
+  }
+}
+```
+
+---
+
+## 4. CQRS Architecture: Separating Command and Query Pipelines
+
+CQRS splits application logic into two independent sides:
+- **Command Side**: Validates domain business logic and appends events.
+- **Query Side**: Subscribes to events to update optimized read databases (e.g., Elasticsearch, Redis).
+
+```javascript
+// Command Handler (Write Model)
+class BookingCommandHandler {
+  constructor(eventStore) { this.es = eventStore; }
+  initiateBooking(pnr, passenger, train, classType) {
+    return this.es.append(pnr, "BookingInitiated", { passenger, train, class: classType });
+  }
+  confirmBooking(pnr) {
+    return this.es.append(pnr, "BookingConfirmed", { status: "CNF" });
+  }
+}
+
+// Query Handler (Read Projections)
+class BookingQueryHandler {
+  constructor() { this.occupancy = {}; this.revenue = {}; }
+
+  handleEvent(event) {
+    if (event.eventType === "BookingConfirmed") {
+      const train = event.data.train || "default";
+      this.occupancy[train] = (this.occupancy[train] || 0) + 1;
+    } else if (event.eventType === "PaymentProcessed") {
+      const train = event.data.train || "default";
+      this.revenue[train] = (this.revenue[train] || 0) + event.data.amount;
+    }
+  }
+}
+```
+
+---
+
+## 5. Event Schema Versioning & Upgraders
+
+As system features evolve, event payload schemas change. **Upgraders** convert legacy events on-the-fly without breaking historical event replays:
+
+```javascript
+class EventUpgrader {
+  constructor() { this.upgraders = {}; }
+
+  register(type, fromVer, toVer, upgradeFn) {
+    this.upgraders[`${type}:${fromVer}:${toVer}`] = upgradeFn;
+  }
+
+  upgrade(event) {
+    let upgraded = { ...event, data: { ...event.data }, metadata: { ...event.metadata } };
+    let v = event.metadata.version || 1;
+    while (this.upgraders[`${event.eventType}:${v}:${v + 1}`]) {
+      upgraded = this.upgraders[`${event.eventType}:${v}:${v + 1}`](upgraded);
+      upgraded.metadata.version = ++v;
+    }
+    return upgraded;
+  }
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Append-Only Event Store**: Store changes as immutable event logs rather than executing in-place record updates.
+2. **Use Projections for State Reconstruction**: Derive application state by applying event streams to projection models.
+3. **Accelerate Replay with Snapshots**: Checkpoint state periodically to avoid replaying long event logs from sequence 0.
+4. **Separate Read and Write Models with CQRS**: Scale read queries independently from write commands.

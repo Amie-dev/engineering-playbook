@@ -1,160 +1,144 @@
-# Module 11: Database Sharding Architecture, Horizontal Partitioning, and Shard Key Selection
+# Module 11: Database Sharding Architecture, Shard Key Design, & Re-Sharding
 
-## Overview
+## Theoretical Overview & Capacity Limits
 
-**Database Sharding** partitions large datasets horizontally across multiple independent database nodes (**Shards**). Unlike vertical scaling or read-replica scaling (which only scales reads), sharding scales both **storage capacity** and **write throughput** far beyond the physical boundaries of a single database server.
-
-Mastering **Sharding Strategies (Range-Based, Hash-Based, Directory-Based)**, **Shard Key Selection Rules**, **Scatter-Gather Query Hazards**, **Cross-Shard JOIN Avoidance**, and **Live Resharding Techniques** is critical for high-scale databases.
-
----
-
-## 1. Horizontal Sharding Architecture & Shard Router
+**Database Sharding** is a horizontal partitioning strategy that divides a single logical database across multiple physical database servers (Shards). Each shard holds a non-overlapping subset of the overall data.
 
 ```mermaid
 flowchart TD
-    ClientApp[Client Application] --> ShardRouter[Shard Router Layer / Middleware]
+    ClientQuery["Client Query (GET product_id: 'PROD-004521')"] --> Router["Shard Router / Coordinator"]
     
-    ShardRouter -->|hash(user_id) % 3 == 0| ShardA["Shard Node A (Physical DB 1)<br/>Contains Users 1-100k"]
-    ShardRouter -->|hash(user_id) % 3 == 1| ShardB["Shard Node B (Physical DB 2)<br/>Contains Users 100k-200k"]
-    ShardRouter -->|hash(user_id) % 3 == 2| ShardC["Shard Node C (Physical DB 3)<br/>Contains Users 200k-300k"]
-
-    style ShardRouter fill:#dbeafe,stroke:#1d4ed8
-    style ShardA fill:#dcfce7,stroke:#15803d
-    style ShardB fill:#dcfce7,stroke:#15803d
-    style ShardC fill:#dcfce7,stroke:#15803d
+    Router -->|Hash Routing (PROD-004521)| ShardA[("Shard Node A (Products 1 - 25M)")]
+    Router -.-> ShardB[("Shard Node B (Products 25M - 50M)")]
+    Router -.-> ShardC[("Shard Node C (Products 50M - 75M)")]
+    Router -.-> ShardD[("Shard Node D (Products 75M - 100M)")]
 ```
+
+### Real-World Case Study: Flipkart Product Catalog
+Flipkart hosts over **150 million products** with peak Diwali traffic reaching **300,000 QPS**:
+- **Single DB Limits**: Maximum 2,000 GB storage and 50,000 QPS capacity.
+- **Sharded Architecture**: Spreads 8 TB storage and 300k QPS across **at least 6 independent database shards** to maintain sub-10ms query execution SLAs.
 
 ---
 
-## 2. Sharding Strategy Taxonomy
+## 1. Sharding Strategies Matrix
 
-```mermaid
-flowchart TD
-    ShardingStrategy[Select Database Sharding Strategy] --> Method{Partitioning Approach}
-
-    Method -- "1. Key/Hash-Based Sharding" --> HashShard["Hash-Based (hash(shard_key) % N)<br/>- Uniform key distribution across shards<br/>- Prevents hotspots<br/>- Adding/removing shards requires resharding data"]
-
-    Method -- "2. Range-Based Sharding" --> RangeShard["Range-Based (e.g. A-F, G-M, N-Z)<br/>- Easy range queries (BETWEEN dates)<br/>- Prone to hot spot shards (e.g. new users inserted in latest range shard)"]
-
-    Method -- "3. Directory Lookup Sharding" --> DirShard["Directory-Based Lookup Table<br/>- Dynamic lookup service maps shard_key -> shard_id<br/>- Flexible re-sharding<br/>- Introduces lookup service latency & SPOF"]
-
-    style HashShard fill:#dcfce7,stroke:#15803d
-    style DirShard fill:#dbeafe,stroke:#1d4ed8
-```
-
-### Sharding Strategy Comparison Matrix
-
-| Sharding Pattern | Routing Logic | Primary Advantage | Major Architectural Drawback |
+| Strategy | Routing Mechanics | Primary Advantage | Major Engineering Drawback |
 | :--- | :--- | :--- | :--- |
-| **Hash-Based** | $\text{Shard} = \text{MurmurHash3}(\text{Key}) \bmod N$ | **Uniform Data Distribution** (Zero hotspots) | Resharding requires full data migration |
-| **Range-Based** | $\text{Shard} = f(\text{Key Range})$ | Efficient for Range Queries (`BETWEEN A AND B`) | **Write Hotspots** on newest date ranges |
-| **Directory-Based** | $\text{Shard} = \text{LookupTable}(\text{Key})$ | Highly flexible; re-shard individual tenants | Additional network hop for lookup service |
+| **Range-Based** | Routes by value ranges (`ID 1 - 1M` $\to$ Shard A). | **Fast Range Queries** (`WHERE id BETWEEN X AND Y`). | **Write Hotspots** on the newest range shard. |
+| **Hash-Based (Modulus)**| Routes by `hash(Key) % N`. | **Uniform Data Distribution**. | **Massive Remapping ($\approx 80\%$)** when adding a node. |
+| **Consistent Hashing** | Maps keys & virtual nodes to a $360^\circ$ ring. | **Minimal Key Remapping ($\approx 1/N$)**. | Requires virtual node tuning for uniform balance. |
+| **Directory-Based** | Lookup table maps keys to target shard IDs. | Highly flexible dynamic shard movement. | Centralized directory becomes SPOF bottleneck. |
 
 ---
 
-## 3. Query Execution: Single-Shard vs. Scatter-Gather Hazards
+## 2. Shard Key Selection & Hot Spot Vulnerability
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor App as Application Backend
-    participant Router as Shard Router
-    participant S1 as Shard 1 DB
-    participant S2 as Shard 2 DB
-    participant S3 as Shard 3 DB
-
-    note over App,S3: OPTIMAL: SINGLE-SHARD QUERY (USING SHARD KEY user_id)
-    App->>Router: SELECT * FROM orders WHERE user_id = 101
-    Router->>Router: Calculates hash("101") -> Routes directly to Shard 1
-    Router->>S1: SELECT * FROM orders WHERE user_id = 101
-    S1-->>Router: Returns 5 rows in 2ms!
-    Router-->>App: Fast Response!
-
-    note over App,S3: HIGH HAZARD: SCATTER-GATHER QUERY (NO SHARD KEY!)
-    App->>Router: SELECT * FROM orders WHERE order_status = 'PENDING'
-    Router->>S1: Query Shard 1 (Scatter)
-    Router->>S2: Query Shard 2 (Scatter)
-    Router->>S3: Query Shard 3 (Scatter)
-    S1-->>Router: Response 1
-    S2-->>Router: Response 2
-    S3-->>Router: Response 3
-    Router->>Router: Merge & Sort results (Gather)
-    Router-->>App: Slow Response (Latency bound by SLOWEST Shard!)
-```
-
----
-
-## 4. Practical Implementation Showcase: Shard Router & Range Aggregator
+Choosing a **Shard Key** is the single most critical decision in database architecture. Poorly chosen keys cause uneven data distribution and system outages.
 
 ```javascript
-const crypto = require("node:crypto");
+// BAD Shard Key: Categorical Sharding (Causes severe hotspot skew!)
+const byCat = { Electronics: 400, Fashion: 200, Home: 200, Books: 200 };
+// Electronics receives 4x traffic, overloading Shard 1 while Shard 4 sits idle!
 
-class DatabaseShardRouter {
-  constructor(shardNodes) {
-    this.shards = shardNodes; // Physical database shard instances
-  }
-
-  // Consistent 32-bit Hash Routing Function
-  _getShardIndex(shardKey) {
-    const hashHex = crypto.createHash("md5").update(String(shardKey)).digest("hex");
-    const hashInt = parseInt(hashHex.substring(0, 8), 16);
-    return Math.abs(hashInt) % this.shards.length;
-  }
-
-  // Execute Single-Shard Query
-  async executeQueryByShardKey(shardKey, queryFn) {
-    const shardIndex = this._getShardIndex(shardKey);
-    const targetShard = this.shards[shardIndex];
-    console.log(`🎯 [SINGLE-SHARD QUERY] Key '${shardKey}' mapped to ${targetShard.name}`);
-    return await queryFn(targetShard);
-  }
-
-  // Execute Scatter-Gather Cross-Shard Query
-  async executeScatterGatherQuery(queryFn) {
-    console.log(`⚠️ [SCATTER-GATHER QUERY] Broadcasting query to ALL ${this.shards.length} shards...`);
-    const startTime = Date.now();
-
-    // Broadcast in parallel to all shards
-    const shardPromises = this.shards.map((shard) => queryFn(shard));
-    const resultsArray = await Promise.all(shardPromises);
-
-    // Merge/Gather results from all shards
-    const mergedData = resultsArray.flat();
-    console.log(`  ✓ Gathered ${mergedData.length} records in ${Date.now() - startTime}ms`);
-    return mergedData;
-  }
+// GOOD Shard Key: High-Cardinality Hash (Uniformly distributes load)
+function simpleHash(key) {
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) & 0x7fffffff;
+  return h;
 }
 
-// Execution Simulation
-const shardsPool = [
-  { name: "Shard-Node-01 (db-east-1)", store: new Map([["user_101", { id: "user_101", name: "Alice" }]]) },
-  { name: "Shard-Node-02 (db-east-2)", store: new Map([["user_202", { id: "user_202", name: "Bob" }]]) },
-  { name: "Shard-Node-03 (db-west-1)", store: new Map([["user_303", { id: "user_303", name: "Charlie" }]]) }
-];
-
-const router = new DatabaseShardRouter(shardsPool);
-
-async function runShardingDemo() {
-  // 1. Single-Shard Point Lookup
-  await router.executeQueryByShardKey("user_101", async (shard) => {
-    return shard.store.get("user_101");
-  });
-
-  // 2. Scatter-Gather Broadcast Search
-  await router.executeScatterGatherQuery(async (shard) => {
-    return Array.from(shard.store.values());
-  });
-}
-
-runShardingDemo();
+const shardAssignment = simpleHash("PROD-004521") % 4; // Uniform Shard 0..3 assignment
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Consistent Hashing with Virtual Nodes Engine (`ConsistentHashRing`)
 
-1. **Choose High-Cardinality Shard Keys**: Always select a shard key with millions of distinct values (e.g. `user_id`, `account_id`) to prevent data hotspots and imbalanced shards. Avoid low-cardinality keys like `gender` or `country`.
-2. **Design Applications for Single-Shard Queries**: Ensure $95\%+$ of critical database read/write queries contain the Shard Key in the `WHERE` clause to avoid expensive **Scatter-Gather** multi-shard broadcasts.
-3. **Avoid Cross-Shard ACID Transactions**: Cross-shard transactions require Two-Phase Commit (2PC), which introduces massive network locking latency and drastically degrades database throughput.
-4. **Co-Locate Related Entities in the Same Shard**: Store a user's profile, orders, and payment records on the exact same shard (using `user_id` as the common shard key) to enable fast single-shard JOINs.
+Adding a 5th shard using naive modulo sharding (`hash % 4` $\to$ `hash % 5`) forces **up to 80% of data to migrate across network nodes**. 
 
+**Consistent Hashing with Virtual Nodes** maps 50+ virtual tokens per physical server onto a $360^\circ$ ring, reducing node migration overhead down to **$\approx 20\%$**.
+
+```javascript
+class ConsistentHashRing {
+  constructor(vnPerServer = 50) {
+    this.ring = new Map();
+    this.sorted = [];
+    this.vn = vnPerServer;
+    this.servers = new Set();
+  }
+
+  _hash(str) {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) - h + str.charCodeAt(i)) & 0x7fffffff;
+    return h % 360;
+  }
+
+  addServer(name) {
+    this.servers.add(name);
+    // Add virtual nodes to ensure uniform ring distribution
+    for (let i = 0; i < this.vn; i++) {
+      this.ring.set(this._hash(`${name}#VN${i}`), name);
+    }
+    this.sorted = Array.from(this.ring.keys()).sort((a, b) => a - b);
+  }
+
+  getServer(key) {
+    const h = this._hash(key);
+    for (const pos of this.sorted) {
+      if (pos >= h) return this.ring.get(pos);
+    }
+    return this.ring.get(this.sorted[0]);
+  }
+}
+```
+
+---
+
+## 4. Re-Sharding & Migration Strategies
+
+When database volume outgrows current cluster limits, data must be re-sharded without system downtime.
+
+```mermaid
+flowchart LR
+    Phase1["Phase 1: Dual-Write<br/>App writes to Old + New Shards"] --> Phase2["Phase 2: Backfill<br/>Background worker copies historical data"]
+    Phase2 --> Phase3["Phase 3: Verify Data<br/>Compare checksums across shards"]
+    Phase3 --> Phase4["Phase 4: Switch Reads<br/>App reads from New Shards"]
+    Phase4 --> Phase5["Phase 5: Deprecate<br/>Stop old writes & decommission"]
+```
+
+1. **Shard Doubling (Power of 2)**: Expand cluster size by doubling nodes ($4 \to 8 \to 16$). Each existing shard splits exactly in half, simplifying data movement.
+2. **Virtual Shards**: Pre-allocate 256 logical virtual shards mapped to 4 physical hardware servers. To add a new server, simply reassign 52 virtual shards to the new box.
+3. **Shadow Writes (5-Phase Live Migration)**: Zero-downtime migration via dual-writing, background backfilling, verification, read-switch, and old write termination.
+
+---
+
+## 5. Cross-Shard Query Patterns
+
+```mermaid
+flowchart TD
+    Coordinator["Query Coordinator Node"] -->|Parallel Dispatch| ShardA["Shard A: Top 5 Local"]
+    Coordinator -->|Parallel Dispatch| ShardB["Shard B: Top 5 Local"]
+    Coordinator -->|Parallel Dispatch| ShardC["Shard C: Top 5 Local"]
+    
+    ShardA -->|Return Top 5| Coordinator
+    ShardB -->|Return Top 5| Coordinator
+    ShardC -->|Return Top 5| Coordinator
+    
+    Coordinator -->|Scatter-Gather Merge| Output["Global Top 5 Result Set"]
+```
+
+### Handling Cross-Shard Operations
+1. **Scatter-Gather Parallel Execution**: For queries without a shard key (`SELECT * FROM products WHERE price > 5000`), the query coordinator dispatches requests to **all shards in parallel**, merging the local top results.
+2. **Cross-Shard JOIN Avoidance**: Joining tables sharded by different keys causes expensive network scans.
+   - **Solution A: Co-location**: Shard related child tables using the parent's shard key (e.g., shard both `orders` and `order_items` by `customer_id`).
+   - **Solution B: Denormalization**: Duplicate required attributes directly inside the target payload.
+
+---
+
+## Key Takeaways
+
+1. **Shard Key Selection is Permanent**: Choose high-cardinality, uniformly distributed shard keys (`user_id`, `product_id`) to avoid traffic hotspots.
+2. **Consistent Hashing Minimizes Re-sharding Overhead**: Using virtual nodes on a hash ring restricts key migration to $1/N$ when expanding nodes.
+3. **Co-locate Related Data**: Shard child entities by the parent entity's shard key to avoid cross-shard JOINs.
+4. **Scatter-Gather for Global Aggregations**: Query all shards concurrently when executing queries that lack shard key filters.

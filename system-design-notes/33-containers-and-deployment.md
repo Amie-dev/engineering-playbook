@@ -1,153 +1,205 @@
-# Module 33: Containerization, Kubernetes Orchestration, and Zero-Downtime Deployment Strategies
+# Module 33: Containerization, Kubernetes Deployment Strategies, & Feature Flags
 
-## Overview
+## Theoretical Overview & Continuous Delivery Framework
 
-Modern cloud platforms use **Containerization (Docker)** to package application binaries, runtime dependencies, and configuration into immutable OS-level virtualization images.
-
-At scale, **Container Orchestrators (Kubernetes / EKS)** automate pod scheduling, horizontal autoscaling, self-healing restarts, and **Zero-Downtime Deployment Strategies (Rolling Updates, Blue-Green Deployments, Canary Releases)**.
-
-Understanding **Deployment Strategy Trade-offs**, **Traffic Splitting Algorithms**, and **Automated Health Check Rollbacks** is essential.
-
----
-
-## 1. Container Isolation & Kubernetes Architecture
+Modern cloud-native deployment strategies isolate code dependencies via **Containers** (Docker/OCI) and automate zero-downtime rollouts across container orchestrators (Kubernetes / ECS).
 
 ```mermaid
 flowchart TD
-    subgraph Kubernetes Cluster Control Plane
-        API[K8s API Server] <--> Etcd[(etcd Cluster Store)]
-        Sched[K8s Scheduler] --> API
-        CCM[Controller Manager] --> API
-    end
-
-    subgraph Worker Nodes (EC2 / Bare Metal)
-        API <--> Kubelet1[Kubelet Daemon Node 1]
-        API <--> Kubelet2[Kubelet Daemon Node 2]
-
-        Kubelet1 --> PodA["Pod 1 (App Container + Sidecar)"]
-        Kubelet1 --> PodB["Pod 2 (App Container)"]
-        Kubelet2 --> PodC["Pod 3 (App Container)"]
-    end
-
-    style API fill:#dbeafe,stroke:#1d4ed8
-    style PodA fill:#dcfce7,stroke:#15803d
-    style PodB fill:#dcfce7,stroke:#15803d
-```
-
----
-
-## 2. Zero-Downtime Deployment Strategy Taxonomy
-
-```mermaid
-flowchart TD
-    StrategyChoice[Select Zero-Downtime Deployment Strategy] --> Type{Risk vs Resource Trade-off}
-
-    Type -- "1. Rolling Update (Default)" --> Rolling["Rolling Update<br/>- Replaces old pods 1-by-1 in-place<br/>- Zero extra hardware cost<br/>- During deployment, v1 and v2 serve traffic concurrently"]
-
-    Type -- "2. Blue-Green Deployment" --> BlueGreen["Blue-Green Deployment<br/>- Maintains two full environments (Blue=V1 Live, Green=V2 New)<br/>- Switch Load Balancer router instantly (100% traffic shift)<br/>- Instant Rollback, BUT requires 2x Infrastructure Capacity!"]
-
-    Type -- "3. Canary Deployment" --> Canary["Canary Deployment<br/>- Shifts 5% of live traffic to V2 Canary pool first<br/>- Monitors error rates & latency for 15 mins<br/>- Gradually ramps traffic 5% -> 25% -> 100%"]
-
-    style Canary fill:#dcfce7,stroke:#15803d
-    style BlueGreen fill:#dbeafe,stroke:#1d4ed8
-    style Rolling fill:#fef3c7,stroke:#b45309
-```
-
-### Deployment Strategy Comparison Matrix
-
-| Strategy | Extra Infrastructure Cost | Rollback Speed | Mixed V1/V2 Traffic? | Production Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| **Rolling Update** | **0%** (Replaces in-place) | Medium (Sequential pod rollback) | **Yes** | Standard microservice deployments |
-| **Blue-Green** | **100%** (Requires 2x cluster footprint) | **Instant** ($O(1)$ Load Balancer DNS flip) | No | High-risk database/monolith cutovers |
-| **Canary Release** | Small (5-10% extra pods) | Fast (Scale down canary pod pool) | **Yes** (Controlled %) | High-traffic critical path APIs |
-
----
-
-## 3. Canary Deployment Traffic Routing & Automated Rollback Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor DevOps as CI/CD Pipeline (Argo Rollouts)
-    participant Router as Traffic Router / Ingress Gateway
-    participant V1 as V1 Stable Pod Pool (95% Traffic)
-    participant V2 as V2 Canary Pod Pool (5% Traffic)
-    participant Prom as Prometheus Metrics Monitor
-
-    DevOps->>V2: Deploy V2 Canary Pods (5% Weight)
-    DevOps->>Router: Adjust Weight: V1=95%, V2=5%
+    Build["1. CI Build & Security Scan"] --> ImageReg[("Container Image Registry")]
     
-    loop Monitor Window (10 Minutes)
-        Prom->>V2: Monitor HTTP 5xx Error Rate %
-        alt Error Rate > 1% (Canary Failed!)
-            Prom-->>DevOps: ALERT: Canary Error Rate Spiked!
-            DevOps->>Router: EMERGENCY ROLLBACK! Shift 100% Traffic back to V1
-            DevOps->>V2: Terminate Canary Pods
-        else Error Rate Normal (<0.1%)
-            Prom-->>DevOps: Canary Healthy!
-            DevOps->>Router: Promote Weight: V1=0%, V2=100% (Cutover Complete)
-        end
-    end
+    ImageReg --> Choice{Deployment Strategy}
+    
+    Choice -->|Blue-Green| BG["Blue-Green Deployment<br/>- Parallel 2x Clusters (Active Blue / Inactive Green)<br/>- Instant LB Switch; Instant Rollback"]
+    
+    Choice -->|Canary| Canary["Canary Deployment<br/>- Route 5% Traffic to New Version<br/>- Monitor Error Spikes -> Promote / Rollback"]
+    
+    Choice -->|Rolling| Rolling["Rolling Update (Default K8s)<br/>- Batch replacement (25% at a time)<br/>- Zero Extra Infra Cost"]
 ```
+
+### Real-World Case Study: Flipkart Big Billion Days (BBD) Sale
+During Flipkart's Big Billion Days:
+- **Canary Rollout**: A new checkout optimization was deployed via a 5% Canary.
+- **Automated Rollback**: When automated observability monitors detected a 2% error rate spike on the 5% canary pool, the deployment pipeline automatically executed a rollback within **90 seconds**, protecting 95% of active shoppers from checkout failures.
 
 ---
 
-## 4. Practical Implementation Showcase: Deterministic Canary Traffic Router Engine
+## 1. Deployment Strategies Comparison Matrix
+
+| Deployment Strategy | Downtime SLA | Rollback Speed | Infra Cost Overhead | Blast Radius / Risk | Recommended Use Case |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **Recreate** | Downtime ($1\text{m}-5\text{m}$).| Slow. | **$1\times$** (No extra cost). | High ($100\%$ users). | Non-critical dev/staging environments. |
+| **Rolling Update** | Zero Downtime. | Moderate (Batch rollback).| **$1.25\times$** (Surge batch). | Moderate. | Kubernetes default for standard APIs. |
+| **Blue-Green** | Zero Downtime. | **Instant ($< 1\text{s}$)**. | **$2.0\times$** ($100\%$ duplicate pool). | Low ($100\%$ instant switch). | Mission-critical payment/auth gateways. |
+| **Canary** | Zero Downtime. | Fast ($< 90\text{s}$). | **$1.05\times$** ($5\%$ canary pool). | **Lowest ($5\%$ traffic limit)**. | User-facing production features. |
+| **Feature Flags** | Zero Downtime. | **Instant ($< 100\text{ms}$)**.| **$1.0\times$**. | Precision targeted. | Decoupling deployment from feature release. |
+
+---
+
+## 2. Core Deployment Strategy Implementations
+
+### 1. Blue-Green Deployment Engine (`BlueGreenDeploy`)
+Maintains two identical environment pools (Blue and Green). At any time, only one environment handles production traffic:
 
 ```javascript
-const crypto = require("node:crypto");
-
-class CanaryTrafficRouter {
-  constructor(canaryWeightPercentage = 10) {
-    this.canaryWeight = canaryWeightPercentage; // e.g. 10%
+class BlueGreenDeploy {
+  constructor(serviceName, instanceCount = 3) {
+    this.serviceName = serviceName;
+    this.count = instanceCount;
+    this.blue = { instances: [], version: null, active: false };
+    this.green = { instances: [], version: null, active: false };
+    this.active = null;
   }
 
-  // Set active canary percentage (e.g. 5%, 25%, 100%)
-  setCanaryWeight(weight) {
-    this.canaryWeight = Math.min(100, Math.max(0, weight));
-    console.log(`🔀 [CANARY WEIGHT UPDATED] Target V2 Canary Weight: ${this.canaryWeight}%`);
+  deployInitial(version) {
+    this.blue.instances = Array.from({ length: this.count }, () => new Container(this.serviceName, version).start());
+    this.blue.version = version;
+    this.blue.active = true;
+    this.active = this.blue;
   }
 
-  // Deterministically route user ID using 32-bit Hash modulo 100
-  routeUser(userId) {
-    const hashHex = crypto.createHash("md5").update(String(userId)).digest("hex");
-    const hashInt = parseInt(hashHex.substring(0, 8), 16);
-    const bucket = Math.abs(hashInt) % 100; // 0 to 99
+  deployNew(version) {
+    const inactive = this.active === this.blue ? this.green : this.blue;
+    inactive.instances = Array.from({ length: this.count }, () => new Container(this.serviceName, version).start());
+    inactive.version = version;
 
-    if (bucket < this.canaryWeight) {
-      return { version: "V2_CANARY", bucket };
+    // Run health check before switching traffic
+    if (!inactive.instances.every((c) => c.isHealthy())) {
+      return false; // Abort switch if health checks fail
     }
-    return { version: "V1_STABLE", bucket };
-  }
-}
 
-// Execution Demonstration
-const router = new CanaryTrafficRouter(20); // 20% Canary
-
-function testTrafficDistribution() {
-  console.log("=== CANARY TRAFFIC DISTRIBUTION TEST (20% Target) ===");
-  let v1Count = 0;
-  let v2Count = 0;
-
-  for (let i = 1; i <= 1000; i++) {
-    const route = router.routeUser(`user_${i}`);
-    if (route.version === "V2_CANARY") v2Count++;
-    else v1Count++;
+    this.active.active = false;
+    inactive.active = true;
+    this.active = inactive; // Instant Load Balancer Switch
+    return true;
   }
 
-  console.log(`V1 Stable Traffic : ${v1Count} requests (${(v1Count / 10).toFixed(1)}%)`);
-  console.log(`V2 Canary Traffic : ${v2Count} requests (${(v2Count / 10).toFixed(1)}%)`);
+  rollback() {
+    const fallback = this.active === this.blue ? this.green : this.blue;
+    this.active.active = false;
+    fallback.active = true;
+    this.active = fallback; // Instant LB Rollback
+  }
 }
+```
 
-testTrafficDistribution();
+### 2. Canary Deployment with Error Spike Analysis (`CanaryDeploy`)
+Routes a small fraction of traffic to a new version, monitoring error rate differentials before promoting to 100%:
+
+```javascript
+class CanaryDeploy {
+  constructor(serviceName, totalInstances = 20) {
+    this.serviceName = serviceName;
+    this.total = totalInstances;
+    this.stableVersion = null;
+    this.canaryVersion = null;
+    this.canaryPct = 0;
+    this.metrics = { stable: { reqs: 0, errs: 0 }, canary: { reqs: 0, errs: 0 } };
+  }
+
+  startCanary(version, percentage = 5) {
+    this.canaryVersion = version;
+    this.canaryPct = percentage;
+  }
+
+  analyze() {
+    const sErr = this.metrics.stable.reqs > 0 ? (this.metrics.stable.errs / this.metrics.stable.reqs) * 100 : 0;
+    const cErr = this.metrics.canary.reqs > 0 ? (this.metrics.canary.errs / this.metrics.canary.reqs) * 100 : 0;
+    const diff = cErr - sErr;
+
+    if (diff > 1.0) return "AUTOMATED_ROLLBACK"; // Tripped error threshold!
+    if (diff > 0.5) return "HOLD";
+    return "PROMOTE";
+  }
+
+  rollbackCanary() {
+    this.canaryPct = 0; // Terminate canary routing
+    this.canaryVersion = null;
+  }
+}
 ```
 
 ---
 
-## Key Production Takeaways
+## 3. Feature Flags Engine (`FeatureFlagService`)
 
-1. **Use Canary Deployments for High-Scale Applications**: Use tools like Argo Rollouts or Istio to gradually shift 5% -> 25% -> 100% of live user traffic to new code releases while monitoring real-time error rates.
-2. **Use Blue-Green Deployments for Instant Cutover & Rollback**: Select Blue-Green deployments when running database migrations or high-risk cutovers where concurrent V1 and V2 API traffic cannot be tolerated.
-3. **Configure Kubernetes Liveness & Readiness Probes**: Ensure all containerized pods define explicit `readinessProbe` (pre-warming before receiving traffic) and `livenessProbe` (rebooting unresponsive containers).
-4. **Automate Rollbacks via Prometheus Error Thresholds**: Configure CI/CD deployment controllers to trigger automatic rollbacks within 60 seconds if canary error rates exceed $1\%$ or latency p99 spikes significantly.
+**Feature Flags** decouple code deployment from feature release. Code is shipped to production dormant and enabled remotely via targeted rules without redeploying binaries.
 
+```mermaid
+flowchart LR
+    Request["Incoming User Request"] --> FF{"Feature Flag Check ('new_checkout_flow')"}
+    
+    FF -->|Flag OFF| OldFlow["Legacy Checkout Flow"]
+    FF -->|Flag ON (Targeted: Bengaluru, 20% Rollout)| NewFlow["New Express Checkout Flow"]
+```
+
+```javascript
+class FeatureFlagService {
+  constructor() { this.flags = new Map(); }
+
+  create(name, config) {
+    this.flags.set(name, {
+      enabled: config.enabled || false,
+      pct: config.pct || 0, // Percentage Rollout (e.g. 20%)
+      cities: config.cities || [], // Geo Targeting
+    });
+  }
+
+  evaluate(name, context = {}) {
+    const flag = this.flags.get(name);
+    if (!flag || !flag.enabled) return false;
+
+    if (flag.cities.length && context.city && flag.cities.includes(context.city)) {
+      return true;
+    }
+
+    if (flag.pct > 0 && context.userId) {
+      let hash = 0;
+      for (const char of context.userId + name) hash = ((hash << 5) - hash) + char.charCodeAt(0);
+      return (Math.abs(hash) % 100) < flag.pct; // Consistent hash user bucket
+    }
+
+    return flag.enabled && flag.pct === 100;
+  }
+}
+```
+
+---
+
+## 4. Automated Continuous Delivery (CD) Pipeline
+
+An enterprise CD pipeline enforces safety checks before promoting code across environments:
+
+$$\text{Unit Tests} \longrightarrow \text{Container Build} \longrightarrow \text{CVE Security Scan} \longrightarrow \text{5\% Canary} \longrightarrow \text{Full Rollout}$$
+
+```javascript
+class DeliveryPipeline {
+  constructor(serviceName) {
+    this.serviceName = serviceName;
+    this.stages = [];
+  }
+
+  addStage(name, actionFn) {
+    this.stages.push({ name, actionFn });
+  }
+
+  run(version) {
+    for (const stage of this.stages) {
+      const res = stage.actionFn({ version });
+      if (!res.ok) {
+        return { status: "FAILED", stage: stage.name };
+      }
+    }
+    return { status: "SUCCESSFULLY_DEPLOYED" };
+  }
+}
+```
+
+---
+
+## Key Takeaways
+
+1. **Standardize Environments via Containers**: Containerize services to guarantee identical behavior across local dev, staging, and production environments.
+2. **Limit Blast Radius with Canary Rollouts**: Route 5% of production traffic to new releases before expanding to 100%.
+3. **Use Blue-Green for Instant Rollbacks**: Use Blue-Green deployments for mission-critical payment gateways where instant traffic switching is required.
+4. **Decouple Deploy from Release via Feature Flags**: Use feature flags to push code into production dormant and toggle access remotely per user segment.

@@ -1,238 +1,233 @@
-# Module 02: REST API Architecture, Idempotency Mechanics, and Production Design Standards
+# Module 02: REST API Architecture, Resource Naming, & Idempotency Design
 
-## Overview
+## Theoretical Overview & Architecture Constraints
 
-**REST (Representational State Transfer)** is an architectural style for distributed hypermedia systems introduced by Roy Fielding. It models web APIs around **Resources** identified by URIs and manipulated using standard **HTTP Verbs** (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
-
-Building production-ready RESTful APIs requires strict adherence to **Fielding's Architectural Constraints** (Statelessness, Uniform Interface, Cacheability, Layered System), **Idempotency Guarantees**, **RFC 7807 Problem Details Error Formatting**, and **API Versioning Strategies**.
-
----
-
-## 1. Architectural Constraints & Resource Endpoint Taxonomy
+**REST (Representational State Transfer)** is an architectural style defined by Roy Fielding that governs communication between web clients and distributed servers. REST treats data entities as **Resources** identified by unique **URIs**, manipulated via standardized HTTP methods.
 
 ```mermaid
 flowchart TD
-    subgraph REST Architectural Constraints
-        C1["1. Statelessness<br/>Every request contains full authentication & context"]
-        C2["2. Uniform Interface<br/>Standard URIs, HTTP Verbs, Representation Formats"]
-        C3["3. Cacheable Responses<br/>Explicit ETag & Cache-Control headers"]
-        C4["4. Layered System<br/>Intermediary proxies, load balancers, & gateways"]
-    end
-
-    subgraph HTTP Verb Mapping
-        GET["GET /api/v1/orders<br/>(Safe & Idempotent Read)"]
-        POST["POST /api/v1/orders<br/>(Non-Idempotent Resource Creation)"]
-        PUT["PUT /api/v1/orders/101<br/>(Idempotent Full Replacement)"]
-        PATCH["PATCH /api/v1/orders/101<br/>(Non-Idempotent Partial Mutation)"]
-        DELETE["DELETE /api/v1/orders/101<br/>(Idempotent Removal)"]
-    end
-
-    C2 --> HTTP Verb Mapping
+    Client["Client (Swiggy App)"] -->|GET /api/v1/restaurants/42| Gateway["API Gateway"]
+    Gateway -->|Forward Request| Service["Restaurant Service"]
+    Service -->|Database Read| DB[("PostgreSQL DB")]
+    Service -- Return JSON Payload --> Gateway
+    Gateway -- HTTP 200 OK + JSON --> Client
 ```
 
-### Comprehensive HTTP Verb Semantics Matrix
-
-| HTTP Verb | Operation Purpose | Safe? | Idempotent? | Success Status Code | Failure Status Codes |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| **`GET`** | Retrieve resource representation | **Yes** | **Yes** | `200 OK` | `404 Not Found`, `400 Bad Request` |
-| **`POST`** | Create new resource / Execute action | No | No | `201 Created` | `400 Bad Request`, `409 Conflict`, `422 Unprocessable` |
-| **`PUT`** | Full replacement of existing resource | No | **Yes** | `200 OK` / `204 No Content` | `404 Not Found`, `400 Bad Request` |
-| **`PATCH`**| Partial modification of fields | No | No (Unless atomic) | `200 OK` | `404 Not Found`, `400 Bad Request`, `422 Unprocessable` |
-| **`DELETE`**| Remove resource | No | **Yes** | `200 OK` / `204 No Content` | `404 Not Found` (or `204` idempotent) |
+### The 6 Core REST Constraints
+1. **Client-Server Separation**: Decouples UI concerns from data storage, allowing frontend and backend code to evolve independently.
+2. **Statelessness**: Every HTTP request must contain all contextual data required for authorization and execution (e.g., Bearer JWT tokens). The server stores **no client session state**.
+3. **Cacheability**: Responses must explicitly declare themselves cacheable or non-cacheable (`Cache-Control`) to prevent stale reads.
+4. **Uniform Interface**: Resources use consistent naming schemes and standard HTTP methods (`GET`, `POST`, `PUT`, `DELETE`).
+5. **Layered System**: Clients cannot detect whether they are connected directly to an end application server, a CDN edge, or a load balancer.
+6. **Code on Demand (Optional)**: Servers can temporarily extend client functionality by transferring executable code (e.g., JavaScript scripts).
 
 ---
 
-## 2. Idempotency Mechanics in Distributed APIs
+## 1. REST Architectural Principles Matrix
 
-An HTTP method is **Idempotent** if executing $N > 1$ identical requests leaves the system in the **exact same state** as executing $N = 1$ request.
+| Principle | Meaning | Real-World System Analogy | Constraint Violation Example |
+| :--- | :--- | :--- | :--- |
+| **Client-Server** | Separation of user interface from backend data storage. | Swiggy iOS app and Node.js API backend deploy independently. | Server rendering HTML UI mixed directly with raw API data. |
+| **Statelessness** | Server holds zero client session state between requests. | JWT token passed in `Authorization` header on every call. | Server storing active page numbers in global RAM variables. |
+| **Cacheability** | Explicit caching headers on resource payloads. | Menu list cached for 5 minutes; cart total never cached. | Serving dynamic cart data without `Cache-Control` headers. |
+| **Uniform Interface** | Predictable URIs and standardized HTTP verb semantics. | `GET /restaurants/42` always retrieves restaurant 42. | Non-standard RPC calls like `POST /getRestaurant` with `{id: 42}`. |
+| **Layered System** | Intermediary proxies (CDNs, LBs, Gateways) operate transparently. | Swiggy app connects to Cloudflare CDN without backend awareness. | Client requiring hardcoded internal microservice IP addresses. |
+
+---
+
+## 2. Resource-Oriented URI Design Best Practices
+
+URIs are the **nouns** of your API ecosystem. Well-designed URIs are self-documenting, predictable, and hierarchical.
+
+```mermaid
+flowchart LR
+    Root["/api/v1"] --> Collection["/restaurants"]
+    Collection --> Item["/42"]
+    Item --> SubCollection["/menu"]
+    SubCollection --> SubItem["/items/901"]
+```
+
+### Clean URI Design Rules
+
+```http
+GOOD: GET /api/v1/restaurants/42/menu
+BAD:  GET /api/getRestaurantMenu?id=42
+```
+
+1. **Use Nouns, Not Verbs**: Resources represent entities (`/orders`), while HTTP methods represent operations (`POST`, `DELETE`).
+2. **Use Plural Nouns**: Standardize on plural collections (`/users`, `/restaurants`, `/orders`).
+3. **Represent Hierarchy**: Nest child resources under parent items (`/restaurants/42/menu`).
+4. **Filter via Query Parameters**: Reserve path segments for resource identification; use query parameters for filtering, sorting, and pagination (`/restaurants?cuisine=biryani&city=bangalore`).
+
+---
+
+## 3. CRUD Operations to HTTP Mapping
+
+The `SwiggyAPI` class illustrates clean mapping between domain CRUD actions and HTTP semantics:
+
+```javascript
+class SwiggyAPI {
+  constructor() {
+    this.restaurants = new Map([
+      [1, { id: 1, name: "Meghana Foods", cuisine: "Biryani", city: "Bangalore" }],
+    ]);
+    this.orders = new Map();
+    this.nextOrderId = 100;
+  }
+
+  // GET /restaurants?city=bangalore -> 200 OK
+  listRestaurants(filters) {
+    let results = Array.from(this.restaurants.values());
+    if (filters.city) {
+      results = results.filter((r) => r.city.toLowerCase() === filters.city.toLowerCase());
+    }
+    return results;
+  }
+
+  // POST /orders -> 201 Created
+  createOrder(data) {
+    const id = this.nextOrderId++;
+    const order = { id, ...data, status: "placed", createdAt: new Date().toISOString() };
+    this.orders.set(id, order);
+    return order;
+  }
+
+  // PATCH /orders/100 -> 200 OK (Partial update)
+  patchOrder(id, updates) {
+    const order = this.orders.get(id);
+    if (!order) return null; // 404 Not Found
+    Object.assign(order, updates);
+    return order;
+  }
+
+  // DELETE /orders/100 -> 204 No Content
+  cancelOrder(id) {
+    if (!this.orders.has(id)) return false; // 404 Not Found
+    this.orders.delete(id);
+    return true; // 204 No Content
+  }
+}
+```
+
+---
+
+## 4. API Versioning Strategies
+
+| Strategy | Syntax Example | Pros | Cons | Best Use Case |
+| :--- | :--- | :--- | :--- | :--- |
+| **URI Path** | `/api/v1/restaurants`<br/>`/api/v2/restaurants` | Highly explicit, browser readable, simple to route at API Gateway. | Minor URL clutter across major versions. | **Industry Standard** (Stripe, Twilio, Swiggy). |
+| **Custom Header**| `Accept-Version: v2`<br/>`Accept: application/vnd.swiggy.v2+json` | Clean URIs, supports granular content negotiation. | Harder to test in browser tools, breaks caching proxies. | Internal enterprise microservices. |
+| **Additive-Only**| Add new optional fields; never delete/rename existing fields. | Zero breaking changes, avoids versioning overhead. | Accumulates technical debt over time. | Public consumer APIs. |
+
+---
+
+## 5. Pagination Mechanics: Offset vs Cursor
+
+Returning unpaginated database records can exhaust RAM and cause network timeouts.
+
+```mermaid
+flowchart TD
+    PagChoice[Pagination Strategy Choice] --> OffsetType["1. Offset-Based Pagination<br/>- Syntax: ?page=3&limit=10 (OFFSET 20 LIMIT 10)<br/>- Flaw: Data drift / duplicates if items inserted concurrently<br/>- SQL Cost: O(OFFSET) performance degradation"]
+    
+    PagChoice --> CursorType["2. Cursor-Based Pagination<br/>- Syntax: ?after=item_1002&limit=10<br/>- Advantage: Stable under concurrent inserts<br/>- SQL Cost: O(1) indexed lookup via WHERE id > cursor"]
+```
+
+```javascript
+class PaginationDemo {
+  constructor() {
+    this.data = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, name: `Restaurant-${i + 1}` }));
+  }
+
+  // Offset Pagination: Problematic when items are inserted during scroll
+  offsetPaginate(page, limit) {
+    const offset = (page - 1) * limit;
+    return this.data.slice(offset, offset + limit);
+  }
+
+  // Cursor Pagination: High performance & stable under concurrent writes
+  cursorPaginate(afterId, limit) {
+    let start = afterId ? this.data.findIndex((r) => r.id === afterId) + 1 : 0;
+    const items = this.data.slice(start, start + limit);
+    const nextCursor = items.length ? items[items.length - 1].id : null;
+    return { items, nextCursor };
+  }
+}
+```
+
+---
+
+## 6. HATEOAS (Hypermedia As The Engine Of Application State)
+
+HATEOAS extends REST payloads by embedding dynamic hypermedia links (`_links`) informing clients of allowed next operations based on current resource state.
+
+```javascript
+function buildHATEOASResponse(order) {
+  const links = [{ rel: "self", href: `/api/v1/orders/${order.id}`, method: "GET" }];
+  
+  if (order.status === "placed") {
+    links.push({ rel: "cancel", href: `/api/v1/orders/${order.id}`, method: "DELETE" });
+    links.push({ rel: "track", href: `/api/v1/orders/${order.id}/tracking`, method: "GET" });
+  }
+  if (order.status === "delivered") {
+    links.push({ rel: "rate", href: `/api/v1/orders/${order.id}/rating`, method: "POST" });
+    links.push({ rel: "reorder", href: `/api/v1/orders`, method: "POST" });
+  }
+  return { ...order, _links: links };
+}
+```
+
+---
+
+## 7. Idempotency Key Architecture for Payment APIs
+
+Because `POST` requests are non-idempotent by default, network timeouts during payment authorization can trigger duplicate billing if retried. **Idempotency Keys** guarantee single execution.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as Mobile Client App
-    participant Gateway as API Gateway / Router
-    participant DB as Central Database Store
+    participant App as Mobile App
+    participant Gateway as API Gateway
+    participant Cache as Redis Idempotency Store
+    participant DB as Billing DB
 
-    note over Client,Gateway: NON-IDEMPOTENT POST (DANGEROUS RETRY)
-    Client->>Gateway: POST /api/v1/payments (Pay $100)
-    Gateway->>DB: Deduct $100
-    Gateway--xClient: Network Timeout! (Response Lost)
-    Client->>Gateway: RETRY: POST /api/v1/payments (Pay $100)
-    Gateway->>DB: Deduct ANOTHER $100! (DUPLICATE CHARGE BUG!)
-
-    note over Client,Gateway: IDEMPOTENT POST WITH IDEMPOTENCY KEY
-    Client->>Gateway: POST /api/v1/payments (Header: Idempotency-Key: "UUID_99182")
-    Gateway->>DB: Process Payment & Store Key "UUID_99182" -> Result $100
-    Gateway--xClient: Network Timeout! (Response Lost)
-    Client->>Gateway: RETRY: POST /api/v1/payments (Header: Idempotency-Key: "UUID_99182")
-    Gateway->>Gateway: Detects existing Key "UUID_99182" in Cache/DB!
-    Gateway-->>Client: Returns Cached Original Result (No Duplicate Charge!)
+    App->>Gateway: POST /payments [Idempotency-Key: key-501]
+    Gateway->>Cache: Check key-501
+    alt Key Found in Cache (Duplicate Retry)
+        Cache-->>Gateway: Return Cached Response (Balance: Rs 550)
+        Gateway-->>App: Return 200 OK (IDEMPOTENT: No duplicate charge!)
+    else Key Not Found (First Execution)
+        Gateway->>DB: Execute Charge (Deduct Rs 450)
+        DB-->>Gateway: Success (TxnID: TXN12345)
+        Gateway->>Cache: Save key-501 -> TxnID Payload (TTL=24h)
+        Gateway-->>App: Return 201 Created (Balance: Rs 550)
+    end
 ```
-
----
-
-## 3. API Versioning Strategies Comparison
-
-```mermaid
-flowchart TD
-    VersioningChoice[Select API Versioning Strategy] --> Strategy{Versioning Mechanism}
-
-    Strategy -- "1. URI Path Versioning" --> PathVer["URI Path (e.g. /api/v1/users)<br/>- Clear, human-readable, easily cached by CDNs<br/>- Most widely adopted industry standard"]
-
-    Strategy -- "2. Query Parameter" --> QueryVer["Query Parameter (e.g. /api/users?version=1)<br/>- Easy fallback for optional parameters<br/>- Can pollute URL structures"]
-
-    Strategy -- "3. Custom Header / Accept" --> HeaderVer["Header / Content Negotiation (Accept: application/vnd.company.v1+json)<br/>- Keeps URIs clean & REST compliant<br/>- Harder to test in browsers & cache at CDN layer"]
-
-    style PathVer fill:#dcfce7,stroke:#15803d
-    style HeaderVer fill:#dbeafe,stroke:#1d4ed8
-```
-
----
-
-## 4. RFC 7807 Problem Details Error Specification
-
-Production REST APIs should standardize error payloads using the **RFC 7807 Problem Details for HTTP APIs** specification (`Content-Type: application/problem+json`):
-
-```json
-{
-  "type": "https://api.techplaybook.org/errors/validation-failed",
-  "title": "Invalid Input Payload",
-  "status": 400,
-  "detail": "The request body failed 2 validation rules.",
-  "instance": "/api/v1/orders/ORD-9912/items",
-  "invalidParams": [
-    { "name": "quantity", "reason": "Quantity must be a positive integer greater than 0" },
-    { "name": "sku", "reason": "SKU 'PROD_INVALID' does not exist in catalog" }
-  ]
-}
-```
-
----
-
-## 5. Practical Implementation Showcase: Production REST Controller
 
 ```javascript
-const http = require("node:http");
-const { URL } = require("node:url");
-
-// Mock Database Store
-const ordersDb = new Map();
-const idempotencyStore = new Map(); // Idempotency Key Cache
-
-class RestOrderController {
-  // GET /api/v1/orders (Paginated List)
-  static async getOrders(req, res, queryParams) {
-    const page = parseInt(queryParams.get("page") || "1", 10);
-    const limit = parseInt(queryParams.get("limit") || "10", 10);
-    const allOrders = Array.from(ordersDb.values());
-
-    const startIndex = (page - 1) * limit;
-    const paginatedOrders = allOrders.slice(startIndex, startIndex + limit);
-
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Cache-Control": "public, max-age=60"
-    });
-    res.end(JSON.stringify({
-      object: "list",
-      page,
-      limit,
-      totalCount: allOrders.length,
-      data: paginatedOrders
-    }));
+class IdempotencyDemo {
+  constructor() {
+    this.processed = new Map();
+    this.balance = 1000;
   }
 
-  // POST /api/v1/orders (Idempotent Resource Creation)
-  static async createOrder(req, res, body) {
-    const idempotencyKey = req.headers["idempotency-key"];
-
-    // Check for duplicate request via Idempotency Key
-    if (idempotencyKey && idempotencyStore.has(idempotencyKey)) {
-      const cachedResponse = idempotencyStore.get(idempotencyKey);
-      res.writeHead(cachedResponse.status, { "Content-Type": "application/json", "X-Cache-Hit": "true" });
-      return res.end(cachedResponse.payload);
+  processPayment(key, amount) {
+    if (this.processed.has(key)) {
+      return this.processed.get(key); // Return cached result; skip charge!
     }
-
-    if (!body.items || !Array.isArray(body.items) || body.items.length === 0) {
-      // RFC 7807 Error Response Format
-      const errorPayload = JSON.stringify({
-        type: "https://api.techplaybook.org/errors/bad-request",
-        title: "Validation Error",
-        status: 400,
-        detail: "Order must contain at least one valid item.",
-        instance: req.url
-      });
-      res.writeHead(400, { "Content-Type": "application/problem+json" });
-      return res.end(errorPayload);
-    }
-
-    const orderId = `ORD_${Date.now()}`;
-    const newOrder = {
-      id: orderId,
-      items: body.items,
-      total: body.total || 0,
-      status: "CREATED",
-      createdAt: new Date().toISOString()
-    };
-
-    ordersDb.set(orderId, newOrder);
-
-    const responsePayload = JSON.stringify(newOrder);
-
-    // Cache Idempotency Key response
-    if (idempotencyKey) {
-      idempotencyStore.set(idempotencyKey, { status: 201, payload: responsePayload });
-    }
-
-    res.writeHead(201, {
-      "Content-Type": "application/json",
-      "Location": `/api/v1/orders/${orderId}`
-    });
-    res.end(responsePayload);
+    this.balance -= amount;
+    const result = { txnId: "TXN" + Date.now(), amount, balance: this.balance };
+    this.processed.set(key, result);
+    return result;
   }
 }
-
-// HTTP Route Dispatcher
-const server = http.createServer((req, res) => {
-  const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
-  let bodyChunks = [];
-
-  req.on("data", (chunk) => bodyChunks.push(chunk));
-  req.on("end", async () => {
-    let body = {};
-    if (bodyChunks.length > 0) {
-      try { body = JSON.parse(Buffer.concat(bodyChunks).toString()); } catch (e) {}
-    }
-
-    if (req.method === "GET" && parsedUrl.pathname === "/api/v1/orders") {
-      return RestOrderController.getOrders(req, res, parsedUrl.searchParams);
-    }
-    if (req.method === "POST" && parsedUrl.pathname === "/api/v1/orders") {
-      return RestOrderController.createOrder(req, res, body);
-    }
-
-    res.writeHead(404, { "Content-Type": "application/problem+json" });
-    res.end(JSON.stringify({
-      type: "https://api.techplaybook.org/errors/not-found",
-      title: "Resource Not Found",
-      status: 404,
-      detail: `Endpoint '${parsedUrl.pathname}' does not exist.`
-    }));
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`=== REST API SERVER ACTIVE: http://localhost:${PORT} ===`);
-});
 ```
 
 ---
 
-## Key Production Takeaways
+## Key Takeaways
 
-1. **Use Plural Nouns for URIs**: Design endpoints around resource entities (`/api/v1/users`), never verbs (`/api/v1/getUsers`).
-2. **Implement Idempotency Keys for `POST` Operations**: Accept an `Idempotency-Key` header on financial/mutation endpoints to safely allow network retries without causing duplicate records or billing bugs.
-3. **Use RFC 7807 for Standardized Error Responses**: Return `Content-Type: application/problem+json` with `type`, `title`, `status`, and `detail` keys to ensure client software can parse errors uniformly.
-4. **Use URI Path Versioning**: Prefer `/api/v1/...` path versioning to ensure CDN caches, edge routers, and API gateways can route requests deterministically without needing header inspection.
-
+1. **Noun-Based URIs**: Use plural nouns (`/restaurants`) and standard HTTP verbs (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`).
+2. **Stateless Authentication**: Pass tokens (JWT) in headers rather than managing server-side session state.
+3. **Prefer Cursor Pagination**: Use cursors for high-volume, dynamic data feeds to prevent item skipping or duplication.
+4. **Idempotency Keys**: Use unique headers (`Idempotency-Key`) for payment and creation endpoints to protect against network retry duplicates.
+5. **HATEOAS**: Embed dynamic navigation links (`_links`) to drive application state transitions cleanly.
