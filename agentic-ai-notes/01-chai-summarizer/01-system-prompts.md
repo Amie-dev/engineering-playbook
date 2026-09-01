@@ -1,147 +1,81 @@
-# Module 01: System Roles, Persona Configuration, and Boundary Isolation (`src/prompts/system-prompts.js`)
+# Module 01: System Roles & Persona Configuration (`src/prompts/system-prompts.js`)
 
 ## Overview
 
-In LLM application engineering, **System Prompts** establish the operational persona, behavioral constraints, domain rules, and output formatting guidelines before any user text is evaluated. By decoupling system-level rules from user-provided content, system prompts prevent context drift and hallucination errors while enforcing strict output schemas across summary endpoints.
+In LLM application engineering, **System Prompts** establish the operational persona, behavioral constraints, domain rules, and output formatting guidelines before any user text is evaluated. By decoupling system-level rules from user-provided content, system prompts prevent context drift and hallucination errors while enforcing strict output schemas across analysis endpoints.
 
-Understanding **System Persona Configuration**, **Hallucination Prevention Rules**, **XML Delimiter Isolation**, and **Prompt Compilation Patterns** is essential for backend AI development.
-
----
-
-## 1. System Prompt Architectural Topology
+In **ChaiPe Analytics**, the `src/prompts/system-prompts.js` module exports specialized system prompts for distinct AI agents: **Summarizer**, **Sentiment Analyst**, **Content Classifier**, and **Chain Orchestrator**.
 
 ```mermaid
 flowchart TD
-    SystemPromptReq[System Prompt Contract Request] --> Persona["1. Persona & Tone Assignment<br/>'You are a senior technology intelligence analyst'"]
+    Request[User Input Article Payload] --> SystemRouter{"Select Agent System Prompt"}
+    
+    SystemRouter -->|Summarization| SumPrompt["SUMMARIZER_PROMPT<br/>Role: ChaiPe Content Summarizer<br/>Limit: <150 words, key findings, data points"]
+    SystemRouter -->|Sentiment| SentPrompt["SENTIMENT_ANALYST_PROMPT<br/>Role: ChaiPe Sentiment Analyst<br/>Rating: Positive/Negative/Neutral + Confidence 0-1"]
+    SystemRouter -->|Classification| ClassPrompt["CONTENT_CLASSIFIER_PROMPT<br/>Role: ChaiPe Classification Specialist<br/>Categories: Tech, Business, Politics, etc."]
+    SystemRouter -->|Orchestration| OrchPrompt["CHAIN_ORCHESTRATOR_PROMPT<br/>Role: Content Analysis Orchestrator<br/>Output: Structured JSON across multi-steps"]
 
-    SystemPromptReq --> Boundaries["2. Hallucination Boundary Rules<br/>'Rely ONLY on facts explicitly stated in text'"]
+    SumPrompt --> LLMInference["Gemini LLM Inference Engine"]
+    SentPrompt --> LLMInference
+    ClassPrompt --> LLMInference
+    OrchPrompt --> LLMInference
 
-    SystemPromptReq --> FocusAreas["3. Domain Focus Directives<br/>- Key technical innovations & architecture<br/>- Business market impact & risk factors"]
-
-    SystemPromptReq --> OutputRules["4. Strict Output Format Schema<br/>- 1-sentence bottom-line summary<br/>- Exactly 3 technical bullet points<br/>- 1-sentence risk assessment"]
-
-    style Persona fill:#dbeafe,stroke:#1d4ed8
-    style Boundaries fill:#fee2e2,stroke:#dc2626
-    style OutputRules fill:#dcfce7,stroke:#15803d
+    LLMInference --> GroundedResponse["Grounded Analysis Output"]
 ```
 
 ---
 
-## 2. Structural Prompt Delimiter Isolation against Injection Attacks
+## 1. System Prompt Agent Capabilities Matrix
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as Client Request
-    participant App as Express Prompt Builder
-    participant LLM as Target LLM API Engine
-
-    User->>App: Submits Article Payload (contains untrusted text)
-    
-    note over App: Wrap user text in XML delimiter blocks!
-    App->>LLM: Pass System Rules + "<article_text>...[Article Payload]...</article_text>"
-    
-    note over LLM: Transformer attention isolates instructions from article data!
-    LLM-->>App: Generates Grounded Summary Output
-    App-->>User: Returns Formatted Summary JSON
-```
-
-### System Persona Configuration Matrix
-
-| Persona Key | Target Audience | Primary Focus | Output Structure |
+| System Prompt Constant | Agent Persona Role | Core Rules & Directives | Expected Output Format |
 | :--- | :--- | :--- | :--- |
-| **`DEFAULT`** | General Readership | Concise, accessible main points | Exactly 3 bullet points. |
-| **`TECH`** | Software Engineers & CTOs | Architecture, technical trade-offs, security risks | 1-sentence executive summary + 3 technical bullets + 1 risk assessment. |
-| **`EXECUTIVE`** | C-Level Executives | Business ROI, strategic impact, market risk | 1-sentence bottom line + 3 executive bullet points. |
+| **`SUMMARIZER_PROMPT`** | Content Summarizer | Keep under 150 words; use simple language; highlight main findings; cite stats. | Concise Markdown / Text summary. |
+| **`SENTIMENT_ANALYST_PROMPT`** | Sentiment Analyst | Positive/Negative/Neutral rating; 0–1 confidence; list key emotional phrases; consider Indian English context. | JSON payload with sentiment, confidence, & phrases. |
+| **`CONTENT_CLASSIFIER_PROMPT`** | Content Classifier | Pick 1 primary category from 9 allowed topics; suggest 2 secondary; explain reasoning. | JSON payload with primary/secondary categories. |
+| **`CHAIN_ORCHESTRATOR_PROMPT`** | Pipeline Orchestrator | Multi-step execution manager; enforce strict structured JSON output at each step. | Multi-stage JSON object envelope. |
 
 ---
 
-## 3. Grounding & Anti-Hallucination Guard Pipeline
-
-```mermaid
-flowchart TD
-    ArticleText[Input Article Stream] --> PromptInject["System Rules Injection: 'Rely ONLY on facts in context'"]
-
-    PromptInject --> LLMGen[LLM Generation Pass]
-
-    LLMGen --> FactCheck{Contains Extrapolated / Unverified Fact?}
-
-    FactCheck -- "Yes (Fact Missing in Context)" --> FilterFact["Discard Unverified Claim / Fallback to Context"]
-
-    FactCheck -- "No (100% Grounded)" --> ValidatedOutput["Return Formatted Grounded Summary"]
-
-    style ValidatedOutput fill:#dcfce7,stroke:#15803d
-    style FilterFact fill:#fee2e2,stroke:#dc2626
-```
-
----
-
-## 4. Code Walkthrough (`src/prompts/system-prompts.js`)
+## 2. Complete Source Code Walkthrough (`src/prompts/system-prompts.js`)
 
 ```javascript
-/**
- * System Prompts Repository defining personas, boundaries, and output rules
- */
-export const SYSTEM_PROMPTS = {
-  DEFAULT: `You are an expert news and article analyst. Your task is to provide clear, concise, and accurate summaries of articles provided by the user.
+// System prompts define the AI's role and behavior for each task
 
-Strict Rules:
-1. Rely ONLY on clear facts mentioned in the provided text context.
-2. Do NOT assume, infer, or extrapolate facts outside the provided text.
-3. Keep summaries clear, objective, and accessible.
-4. Output exactly 3 bullet points unless requested otherwise.`,
+export const SUMMARIZER_PROMPT = `You are an expert content summarizer for ChaiPe Analytics.
+Your job is to create clear, concise summaries of articles.
+Rules:
+- Keep summaries under 150 words
+- Use simple language
+- Highlight the main argument or finding
+- Mention any data or statistics referenced`;
 
-  TECH: `You are a senior technology intelligence analyst. Your task is to analyze technical software articles for engineering executives.
+export const SENTIMENT_ANALYST_PROMPT = `You are a sentiment analysis expert at ChaiPe Analytics.
+Your job is to analyze the emotional tone of text content.
+Rules:
+- Identify the overall sentiment: positive, negative, or neutral
+- Rate confidence from 0 to 1
+- List specific phrases that indicate sentiment
+- Consider cultural context for Indian English content`;
 
-Focus Areas:
-- Key technical innovations, architectural changes, and code patterns
-- Business, performance, and competitive market dynamics
-- Security risks, limitations, and future outlook
+export const CONTENT_CLASSIFIER_PROMPT = `You are a content classification specialist at ChaiPe Analytics.
+Your job is to categorize articles into topics.
+Available categories: Technology, Business, Sports, Entertainment, Politics, Science, Health, Education, Lifestyle
+Rules:
+- Pick the single best-fit primary category
+- Suggest up to 2 secondary categories
+- Explain your reasoning in one sentence`;
 
-Required Format:
-- 1-sentence executive summary
-- 3 key technical takeaways (bullet points)
-- 1-sentence risk and limitation assessment`,
-
-  EXECUTIVE: `You are an executive chief of staff preparing high-level briefs for C-level executives.
-
-Required Format:
-- 1-sentence bottom line
-- 3 key strategic bullet points maximum (using • symbol)
-- Concise business impact statement`
-};
-
-/**
- * Compiles a system prompt and user text into a structured, injection-resistant payload
- */
-export function buildPromptWithSystem(systemPromptKey, userText) {
-  const systemPrompt = SYSTEM_PROMPTS[systemPromptKey] || SYSTEM_PROMPTS.DEFAULT;
-  const sanitizedText = userText.trim().replace(/<\/?article_text>/g, ""); // Strip nested XML tags
-
-  return `${systemPrompt}
-
-### INPUT ARTICLE PAYLOAD
-<article_text>
-${sanitizedText}
-</article_text>
-
-### GENERATED SUMMARY BRIEF:`;
-}
-
-// Execution Verification Example
-const rawInputArticle = "Node.js 22 was released featuring native WebSocket client support and V8 v12.4 engine updates.";
-const compiledPromptPayload = buildPromptWithSystem("TECH", rawInputArticle);
-
-console.log("Compiled System Prompt Payload:\n");
-console.log(compiledPromptPayload);
+export const CHAIN_ORCHESTRATOR_PROMPT = `You are a content analysis orchestrator at ChaiPe Analytics.
+You process articles through multiple analysis steps.
+For each step, provide structured JSON output.
+Be thorough but concise.`;
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Decouple System Prompts from Dynamic Content**: Store system role definitions in dedicated prompt repository files (`src/prompts/system-prompts.js`) rather than hardcoding prompt strings inside route handlers.
-2. **Enforce Strict Anti-Hallucination Directives**: Always include explicit rules (e.g. `"Rely ONLY on clear facts mentioned in the context. Do NOT extrapolate or infer facts outside the text."`) to minimize model hallucination.
-3. **Use Structural Delimiters (`<article_text>`)**: Wrap untrusted article text inside XML tags to prevent malicious articles from hijacking system prompt instructions.
-4. **Offer Domain-Tailored Personas**: Provide specialized persona variants (`TECH`, `EXECUTIVE`, `LEGAL`) so clients can request summaries tailored to their target audience.
-
+1. **Decouple Persona Directives into Dedicated Modules**: Storing system prompts in `src/prompts/system-prompts.js` ensures prompt instructions remain version-controlled, reusable, and cleanly separated from route handler logic.
+2. **Account for Regional Context**: The `SENTIMENT_ANALYST_PROMPT` explicitly instructs the model to consider Indian English nuances (e.g. phrases like *"funding winter"*, *"pre-monsoon prep"*, or *"doing the needful"*).
+3. **Enforce Hard Constraints in System Rules**: Setting explicit rules (such as word limits under 150 words or confidence bounds between 0 and 1) reduces output variance across model calls.
+4. **Prepare for Pipeline Integration**: Passing `systemInstruction` in Gemini `model.startChat({ systemInstruction: ... })` grounds all downstream chat turns under the designated role.

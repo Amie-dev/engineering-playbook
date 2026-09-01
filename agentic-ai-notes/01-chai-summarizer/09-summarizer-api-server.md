@@ -2,209 +2,229 @@
 
 ## Overview
 
-The **Express Summarizer API Server** serves as the production HTTP entry point for the text analysis microservice. It exposes structured REST endpoints (`/api/summarize`, `/api/cot`, `/api/chain`) allowing frontend web clients, CLI tools, and external services to trigger basic role-prompted summaries, Chain-of-Thought reasoning passes, and parallel multi-chain pipelines.
+The **Express Summarizer API Server** serves as the production HTTP entry point for the **ChaiPe Analytics** microservice. It exposes structured REST endpoints (`POST /summarize`, `POST /analyze`, `POST /chain`, `GET /costs`) allowing web frontends, mobile apps, and backend services to execute few-shot summarization, Chain-of-Thought analysis, parallel pipeline orchestration, and real-time cost telemetry audits.
 
-Understanding **REST API Route Dispatching**, **Standardized Response Envelopes**, **Input Validation Middleware**, and **Graceful Error Handling** is essential for backend engineering.
-
----
-
-## 1. Express API Routing & Dispatcher Architecture
+In **ChaiPe Analytics**, `src/index.js` initializes Google Generative AI (`gemini-2.0-flash`), configures Express middleware, routes requests to prompt and chain modules, and tracks token consumption for every request.
 
 ```mermaid
 flowchart TD
-    Client[HTTP Client / REST Consumer] --> ExpressServer["Express API Server Gateway (src/index.js)<br/>Port: 3000"]
+    Client[HTTP Client / Consumer] --> ExpressGateway["Express API Gateway (src/index.js)<br/>Port: 3000"]
 
-    ExpressServer --> MiddlewareTier["1. Middleware Tier<br/>express.json() Parser + CORS + Input Validation"]
+    ExpressGateway --> JsonParser["express.json() Body Parser"]
 
-    MiddlewareTier --> RouteDispatcher{2. API Route Dispatcher}
+    JsonParser --> Router{API Route Dispatcher}
 
-    RouteDispatcher -- "POST /api/summarize" --> SummarizeHandler["Summarize Route Handler<br/>(Modes: 'basic' | 'few-shot')"]
+    Router -- "POST /summarize" --> SummarizeHandler["POST /summarize<br/>Modes: 'few-shot' | 'chain-of-thought' | 'chain'"]
+    Router -- "POST /analyze" --> AnalyzeHandler["POST /analyze<br/>Modes: 'few-shot' | 'chain'"]
+    Router -- "POST /chain" --> ChainHandler["POST /chain<br/>Modes: 'sequential' | 'parallel'"]
+    Router -- "GET /costs" --> CostsHandler["GET /costs<br/>Telemetry: getTotalCost()"]
 
-    RouteDispatcher -- "POST /api/cot" --> CoTHandler["Chain-of-Thought Handler<br/>(Types: 'SUMMARIZE' | 'SENTIMENT')"]
-
-    RouteDispatcher -- "POST /api/chain" --> ChainHandler["Pipeline Orchestration Handler<br/>(Modes: 'sequential' | 'parallel')"]
-
-    SummarizeHandler --> GeminiSDK["Google Gemini LLM SDK"]
-    CoTHandler --> GeminiSDK
+    SummarizeHandler --> GeminiSDK["Google Generative AI (gemini-2.0-flash)"]
+    AnalyzeHandler --> GeminiSDK
     ChainHandler --> GeminiSDK
 
-    GeminiSDK --> ResponseEnvelope["3. Response Envelope Formatter"]
+    GeminiSDK --> CostTracker["trackRequest() Billing Telemetry"]
+    CostTracker --> ResponseJSON["JSON Response Envelope"]
 
-    ResponseEnvelope --> Client
+    CostsHandler --> ResponseJSON
+    ResponseJSON --> Client
 
-    style ExpressServer fill:#dbeafe,stroke:#1d4ed8
-    style ResponseEnvelope fill:#dcfce7,stroke:#15803d
+    style ExpressGateway fill:#dbeafe,stroke:#1d4ed8
+    style ResponseJSON fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. API Request Lifecycle & Error Middleware Flow
+## 1. REST Endpoint Specification Matrix
+
+| Endpoint Route | Method | JSON Request Body | Processing Modes | Output Response Envelope |
+| :--- | :--- | :--- | :--- | :--- |
+| **`/summarize`** | `POST` | `{ article: string, mode?: string }` | `few-shot`, `chain-of-thought`, `chain` (default) | Summary object + token telemetry |
+| **`/analyze`** | `POST` | `{ text: string, mode?: string }` | `few-shot`, `chain` (default) | Reconciled sentiment analysis payload |
+| **`/chain`** | `POST` | `{ article: string, mode?: string }` | `sequential`, `parallel` (default) | Combined Summary + Sentiment Analysis object |
+| **`/costs`** | `GET` | None | N/A | Financial expenditure log & aggregate metrics |
+
+---
+
+## 2. API Request Lifecycle & Execution Sequence
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Client as API Client
-    participant Server as Express Server
-    participant Handler as Route Handler
-    participant LLM as Google Gemini API
+    actor Client as Client App
+    participant Server as Express Server (src/index.js)
+    participant SDK as Gemini SDK (gemini-2.0-flash)
+    participant Tracker as Cost Tracker (utils/cost-tracker.js)
 
-    Client->>Server: POST /api/chain { article: "...", mode: "parallel" }
-    Server->>Server: Express JSON Body Parser
-    
-    note over Server: Validate article text presence!
-    alt Article Text Missing
-        Server-->>Client: HTTP 400 Bad Request { error: "ARTICLE_REQUIRED" }
-    else Article Text Valid
-        Server->>Handler: Dispatch to runParallelPipeline()
-        Handler->>LLM: Pass Parallel Prompts
-        LLM-->>Handler: Return Pipeline Analysis Payload
-        Handler-->>Client: HTTP 200 OK { status: "success", data: {...} }
-    end
-```
-
-### API Endpoint Specification Reference Matrix
-
-| Endpoint Route | Method | Required JSON Body | Query Parameters | HTTP Success Response |
-| :--- | :--- | :--- | :--- | :--- |
-| `/api/summarize` | `POST` | `{ article: string, mode?: "basic" \| "few-shot" }` | `persona?: "TECH" \| "EXECUTIVE"` | `200 OK` + Structured Summary Object |
-| `/api/cot` | `POST` | `{ article: string, type?: "SUMMARIZE" \| "SENTIMENT" }` | None | `200 OK` + CoT Reasoning Trace |
-| `/api/chain` | `POST` | `{ article: string, mode?: "sequential" \| "parallel" }` | None | `200 OK` + Unified Summary & Sentiment Object |
-| `/health` | `GET` | None | None | `200 OK` + `{ status: "UP", timestamp }` |
-
----
-
-## 3. Standardized HTTP Response Envelope Format
-
-```mermaid
-flowchart TD
-    RawReturn[LLM & Pipeline Return Output] --> Formatter[Response Envelope Formatter]
-
-    Formatter --> JSONObj["JSON Response Envelope:<br/>- status: 'success'<br/>- mode: 'parallel'<br/>- executionTimeMs: 1420<br/>- data: { summary, sentiment }<br/>- tokenUsage: { input, output, total }"]
-
-    style JSONObj fill:#dcfce7,stroke:#15803d
+    Client->>Server: POST /summarize { article: "...", mode: "few-shot" }
+    Server->>Server: Count input tokens via countTokens()
+    Server->>SDK: Start chat with SUMMARIZER_PROMPT & SUMMARIZATION_EXAMPLES
+    SDK-->>Server: Return response text
+    Server->>Server: Count output tokens via countTokens()
+    Server->>Tracker: trackRequest("gemini-2.0-flash", inputTokens, outputTokens)
+    Server-->>Client: HTTP 200 OK { summary, mode: "few-shot" }
 ```
 
 ---
 
-## 4. Code Walkthrough (`src/index.js`)
+## 3. Complete Source Code Walkthrough (`src/index.js`)
 
 ```javascript
 import express from "express";
 import { GoogleGenerativeAI } from "@google/generative-ai";
-import { buildPromptWithSystem } from "./prompts/system-prompts.js";
-import { buildFewShotPrompt } from "./prompts/few-shot-templates.js";
-import { buildCoTPrompt } from "./prompts/chain-of-thought.js";
-import { runSequentialPipeline, runParallelPipeline } from "./chains/pipeline.js";
+import dotenv from "dotenv";
+
+import { SUMMARIZER_PROMPT, SENTIMENT_ANALYST_PROMPT } from "./prompts/system-prompts.js";
+import { SUMMARIZATION_EXAMPLES, SENTIMENT_EXAMPLES } from "./prompts/few-shot-templates.js";
+import { COT_SUMMARIZE, buildCoTPrompt } from "./prompts/chain-of-thought.js";
+import { runSummarizeChain } from "./chains/summarize-chain.js";
+import { runSentimentChain } from "./chains/sentiment-chain.js";
+import { runPipeline } from "./chains/pipeline.js";
+import { countTokens, formatTokenCount } from "./utils/token-counter.js";
+import { trackRequest, getTotalCost } from "./utils/cost-tracker.js";
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
 
-// Initialize Gemini LLM SDK
-const apiKey = process.env.GEMINI_API_KEY || "MOCK_DEVELOPMENT_KEY";
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// Initialize Gemini
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-/**
- * Health Check Endpoint
- */
-app.get("/health", (req, res) => {
-  res.status(200).json({ status: "UP", service: "article-summarizer-api", timestamp: new Date().toISOString() });
-});
-
-/**
- * 1. Basic & Few-Shot Summarization Endpoint
- */
-app.post("/api/summarize", async (req, res, next) => {
+// POST /summarize - Summarize an article using few-shot + CoT
+app.post("/summarize", async (req, res) => {
   try {
-    const { article, mode = "basic", persona = "TECH" } = req.body;
-    if (!article || typeof article !== "string") {
-      return res.status(400).json({ error: "INVALID_REQUEST", message: "Property 'article' string is required." });
-    }
+    const { article, mode } = req.body;
 
-    const startTime = Date.now();
-    const prompt = mode === "few-shot"
-      ? buildFewShotPrompt("STRUCTURED", article)
-      : buildPromptWithSystem(persona, article);
-
-    const result = await model.generateContent(prompt);
-    const durationMs = Date.now() - startTime;
-
-    return res.status(200).json({
-      status: "success",
-      mode,
-      persona,
-      durationMs,
-      summary: result.response.text().trim()
-    });
-  } catch (err) {
-    next(err);
-  }
-});
-
-/**
- * 2. Chain-of-Thought Deductive Analysis Endpoint
- */
-app.post("/api/cot", async (req, res, next) => {
-  try {
-    const { article, type = "SUMMARIZE" } = req.body;
     if (!article) {
-      return res.status(400).json({ error: "INVALID_REQUEST", message: "Property 'article' is required." });
+      return res.status(400).json({ error: "Article text is required" });
     }
 
-    const startTime = Date.now();
-    const prompt = buildCoTPrompt(type, article);
-    const result = await model.generateContent(prompt);
-    const durationMs = Date.now() - startTime;
+    const inputTokens = countTokens(article);
+    console.log(`Input: ${formatTokenCount(inputTokens)}`);
 
-    return res.status(200).json({
-      status: "success",
-      type,
-      durationMs,
-      cotAnalysis: result.response.text().trim()
-    });
-  } catch (err) {
-    next(err);
+    let result;
+
+    if (mode === "few-shot") {
+      // Use few-shot examples for summarization
+      const chat = model.startChat({
+        systemInstruction: SUMMARIZER_PROMPT,
+        history: SUMMARIZATION_EXAMPLES.map(ex => ({
+          role: ex.role,
+          parts: [{ text: ex.content }]
+        }))
+      });
+
+      const response = await chat.sendMessage(`Summarize this article:\n${article}`);
+      result = { summary: response.response.text(), mode: "few-shot" };
+
+    } else if (mode === "chain-of-thought") {
+      // Use chain-of-thought for detailed reasoning
+      const prompt = buildCoTPrompt(COT_SUMMARIZE, { article });
+      const chat = model.startChat({ systemInstruction: SUMMARIZER_PROMPT });
+      const response = await chat.sendMessage(prompt);
+
+      try {
+        result = { analysis: JSON.parse(response.response.text()), mode: "chain-of-thought" };
+      } catch {
+        result = { analysis: response.response.text(), mode: "chain-of-thought" };
+      }
+
+    } else {
+      // Default: use the 4-step chain
+      result = await runSummarizeChain(model, article);
+      result.mode = "chain";
+    }
+
+    const outputTokens = countTokens(JSON.stringify(result));
+    trackRequest("gemini-2.0-flash", inputTokens, outputTokens);
+
+    res.json(result);
+  } catch (error) {
+    console.error("Summarize error:", error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-/**
- * 3. Multi-Step Chain Pipeline Endpoint (Sequential / Parallel)
- */
-app.post("/api/chain", async (req, res, next) => {
+// POST /analyze - Run sentiment analysis
+app.post("/analyze", async (req, res) => {
   try {
-    const { article, mode = "sequential" } = req.body;
-    if (!article) {
-      return res.status(400).json({ error: "INVALID_REQUEST", message: "Property 'article' is required." });
+    const { text, mode } = req.body;
+
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
     }
 
-    const resultPayload = mode === "parallel"
-      ? await runParallelPipeline(model, article)
-      : await runSequentialPipeline(model, article);
+    let result;
 
-    return res.status(200).json({
-      status: "success",
-      mode,
-      data: resultPayload
-    });
-  } catch (err) {
-    next(err);
+    if (mode === "few-shot") {
+      // Use few-shot examples
+      const chat = model.startChat({
+        systemInstruction: SENTIMENT_ANALYST_PROMPT,
+        history: SENTIMENT_EXAMPLES.map(ex => ({
+          role: ex.role,
+          parts: [{ text: ex.content }]
+        }))
+      });
+
+      const response = await chat.sendMessage(`Analyze sentiment: "${text}"`);
+      try {
+        result = JSON.parse(response.response.text());
+      } catch {
+        result = { raw: response.response.text() };
+      }
+      result.mode = "few-shot";
+
+    } else {
+      // Default: full sentiment chain with reasoning
+      result = await runSentimentChain(model, text);
+      result.mode = "chain";
+    }
+
+    const inputTokens = countTokens(text);
+    const outputTokens = countTokens(JSON.stringify(result));
+    trackRequest("gemini-2.0-flash", inputTokens, outputTokens);
+
+    res.json(result);
+  } catch (error) {
+    console.error("Analyze error:", error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
-/**
- * Centralized Error Handling Middleware
- */
-app.use((err, req, res, next) => {
-  console.error("🚨 [UNHANDLED API ERROR]:", err.stack);
-  res.status(500).json({
-    error: "INTERNAL_SERVER_ERROR",
-    message: err.message || "An unexpected error occurred during LLM processing."
-  });
+// POST /chain - Run the full analysis pipeline
+app.post("/chain", async (req, res) => {
+  try {
+    const { article, mode } = req.body;
+
+    if (!article) {
+      return res.status(400).json({ error: "Article text is required" });
+    }
+
+    // mode can be "sequential" or "parallel" (default)
+    const result = await runPipeline(model, article, { mode });
+
+    res.json(result);
+  } catch (error) {
+    console.error("Chain error:", error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /costs - View API usage and costs
+app.get("/costs", (req, res) => {
+  res.json(getTotalCost());
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 [SERVER STARTED] Article Summarizer API listening on port ${PORT}`);
+  console.log(`ChaiPe Summarizer API running on http://localhost:${PORT}`);
+  console.log("Endpoints:");
+  console.log("  POST /summarize  - Summarize an article");
+  console.log("  POST /analyze    - Sentiment analysis");
+  console.log("  POST /chain      - Full analysis pipeline");
+  console.log("  GET  /costs      - View API usage costs");
 });
 ```
 
@@ -212,8 +232,7 @@ app.listen(PORT, () => {
 
 ## Key Production Takeaways
 
-1. **Use Standardized JSON Response Envelopes**: Always return consistent JSON envelopes containing `status`, `durationMs`, and `data` objects across all API endpoints.
-2. **Validate Request Bodies Early**: Validate input payloads in route middleware before initializing expensive LLM API calls to return HTTP 400 Bad Request errors early.
-3. **Implement Centralized Express Error Middleware**: Use centralized error handling middleware (`app.use((err, req, res, next) => ...)` to log unhandled errors and return clean HTTP 500 JSON errors.
-4. **Decouple API Routes from Prompt Construction**: Keep prompt builders (`buildPromptWithSystem`, `buildFewShotPrompt`) isolated in `src/prompts/` to ensure clean separation of concerns.
-
+1. **Integrated Token & Billing Telemetry**: `trackRequest("gemini-2.0-flash", inputTokens, outputTokens)` automatically logs every endpoint call, allowing `GET /costs` to expose real-time spending metrics.
+2. **Flexible Route Mode Parameters**: Endpoints support multiple processing modes (`mode: "few-shot"`, `"chain-of-thought"`, or `"chain"`) to accommodate different prompt strategies dynamically.
+3. **Defensive Error Handling**: Wrap route logic in `try...catch` blocks returning `400 Bad Request` for missing inputs and `500 Internal Server Error` with diagnostic messages for unexpected failures.
+4. **Environment-Driven Configuration**: Uses `dotenv` to load `GEMINI_API_KEY` securely from `.env` files without hardcoding credentials in production code.

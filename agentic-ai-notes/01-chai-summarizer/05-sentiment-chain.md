@@ -2,150 +2,113 @@
 
 ## Overview
 
-Single-pass sentiment analysis prompts often produce noisy, biased, or over-simplistic binary outputs (e.g. "Positive" or "Negative") without backing justification. The **Multi-Stage Sentiment Analysis Pipeline** breaks sentiment evaluation into two decoupled stages: **Extract Claims (Positive vs. Negative)** $\rightarrow$ **Chain-of-Thought Score Calibration (-1.0 to +1.0)**.
+Single-pass sentiment analysis prompts often produce noisy or over-simplistic outputs. The **Multi-Stage Sentiment Analysis Pipeline** breaks sentiment evaluation into a dual-pass reconciliation system: **Fast Quick Check** $\rightarrow$ **Deep Chain-of-Thought Analysis** $\rightarrow$ **Multi-Method Reconciliation**.
 
-Understanding **Claim Decoupling**, **Continuous Sentiment Score Calibration**, **Bias Elimination**, and **Chain Runner Integration** is critical for financial and brand monitoring services.
-
----
-
-## 1. Multi-Stage Sentiment Pipeline Topology
+In **ChaiPe Analytics**, `src/chains/sentiment-chain.js` runs both a fast sentiment check and a deep CoT analysis pass, comparing results to generate a reconciled sentiment verdict with verified confidence scores.
 
 ```mermaid
 flowchart TD
-    RawArticle[Raw Article / Review Payload Input] --> Step1["Step 1: Extract Optimistic vs Critical Claims<br/>(Decouples fact claims from emotional bias)"]
+    RawInput[Raw Article / Text Payload] --> Step1["Step 1: Quick Sentiment Check<br/>(quickSentiment: returns basic JSON rating)"]
 
-    Step1 -->|Intermediate State: claimsText| Step2["Step 2: Chain-of-Thought Score Calibration<br/>(Evaluates claim weights & assigns -1.0 to +1.0 score)"]
+    RawInput --> Step2["Step 2: Deep CoT Analysis<br/>(deepAnalysis: uses COT_SENTIMENT step-by-step reasoning)"]
 
-    Step2 --> ResponseParser["Step 3: Response Tag Parser<br/>(Parses numeric score, label, & rationale)"]
+    Step1 -->|quickResult| Step3["Step 3: Reconcile Verdicts<br/>(reconcile: compares agreement & calculates confidence)"]
+    Step2 -->|deepResult| Step3
 
-    ResponseParser --> DeliveredPayload[Structured Sentiment JSON Payload Delivered]
+    Step3 --> FinalResult[Structured Reconciled Sentiment Response]
 
     style Step1 fill:#dbeafe,stroke:#1d4ed8
     style Step2 fill:#fef3c7,stroke:#b45309
-    style DeliveredPayload fill:#dcfce7,stroke:#15803d
+    style FinalResult fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Sentiment Score Calibration Curve (-1.0 to +1.0)
+## 1. Sentiment Chain Dual-Pass Comparison Matrix
 
-```mermaid
-flowchart TD
-    ScoreScale[Sentiment Score Calibration Scale] --> Band{Score Band Range}
-
-    Band -- "+0.6 to +1.0" --> VeryPos["VERY_POSITIVE / STRONGLY OPTIMISTIC<br/>High growth, record earnings, technological breakthroughs"]
-
-    Band -- "+0.2 to +0.5" --> ModPos["POSITIVE / MODERATELY OPTIMISTIC<br/>Incremental improvements, steady product updates"]
-
-    Band -- "-0.1 to +0.1" --> Neutral["NEUTRAL / BALANCED<br/>Pure factual reporting, equal balance of pros & cons"]
-
-    Band -- "-0.5 to -0.2" --> ModNeg["NEGATIVE / CONCERNING<br/>Minor revenue drop, executive departure, slight delays"]
-
-    Band -- "-1.0 to -0.6" --> VeryNeg["VERY_NEGATIVE / CRITICAL<br/>Bankruptcy, security breach, massive regulatory fines"]
-
-    style VeryPos fill:#dcfce7,stroke:#15803d
-    style Neutral fill:#dbeafe,stroke:#1d4ed8
-    style VeryNeg fill:#fee2e2,stroke:#dc2626
-```
-
-### Sentiment Pipeline Stage Feature Matrix
-
-| Stage Index | Stage Function | Primary Input Payload | Output Artifact | Key Operational Benefit |
+| Stage | Function Name | System Instruction / Prompt | Expected JSON Output Keys | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| **Stage 1** | Claims Extraction | Raw Article Text | Positive & Negative Statements | Eliminates subjective guessing by extracting factual claims first. |
-| **Stage 2** | CoT Calibration Pass | Extracted Claims Text | `REASONING:` + `FINAL SENTIMENT:` | Calibrates a precise continuous score between $-1.0$ and $+1.0$. |
-| **Stage 3** | Regex Payload Parsing | Raw CoT Response | Structured Sentiment JSON Object | Enables automated downstream database indexing and chart rendering. |
+| **Pass 1** | `quickSentiment` | `SENTIMENT_ANALYST_PROMPT` | `{ sentiment, confidence }` | Rapid baseline sentiment assessment. |
+| **Pass 2** | `deepAnalysis` | `COT_SENTIMENT` (via `buildCoTPrompt`) | `{ step1_emotional_words, step2_directions, step3_overall, step4_confidence, reasoning }` | Deep 4-step emotional word breakdown & CoT reasoning. |
+| **Pass 3** | `reconcile` | Pure JavaScript Reconciliation | `{ sentiment, confidence, methods_agree, quick_result, detailed_reasoning, emotional_words, analyzed_at }` | Combines both passes; boosts confidence if methods agree. |
 
 ---
 
-## 3. Asynchronous Claims-to-Score Execution Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Handler as Express Route Handler
-    participant Chain as Sentiment Chain Runner
-    participant Step1 as Step 1 (Claims Extractor)
-    participant Step2 as Step 2 (CoT Evaluator)
-    participant LLM as Google Gemini API
-
-    Handler->>Chain: Call runSentimentChain(text)
-    Chain->>Step1: Extract Positive & Negative Claims
-    Step1->>LLM: "List positive and negative claims separately..."
-    LLM-->>Step1: Return claimsText
-
-    Chain->>Step2: Pass claimsText into buildCoTPrompt("SENTIMENT", claimsText)
-    Step2->>LLM: "Weigh claims and output Score, Label, Rationale..."
-    LLM-->>Step2: Return CoT Response Text
-
-    Chain->>Chain: Parse Score & Label into JSON
-    Chain-->>Handler: Return { score: 0.75, label: "POSITIVE", claims, rationale }
-```
-
----
-
-## 4. Code Walkthrough (`src/chains/sentiment-chain.js`)
+## 2. Complete Source Code Walkthrough (`src/chains/sentiment-chain.js`)
 
 ```javascript
-import { buildCoTPrompt } from "../prompts/chain-of-thought.js";
+// Sentiment analysis chain with step-by-step reasoning
 
-/**
- * Step 1: Extracts optimistic and critical claims separately
- */
-async function extractClaims(model, text) {
-  const prompt = `Extract all positive statements and negative statements from this text separately:
+import { SENTIMENT_ANALYST_PROMPT } from "../prompts/system-prompts.js";
+import { COT_SENTIMENT, buildCoTPrompt } from "../prompts/chain-of-thought.js";
 
-TEXT PAYLOAD:
-"""
-${text}
-"""
+// Step 1: Quick sentiment check (fast, less detailed)
+async function quickSentiment(model, text) {
+  const chat = model.startChat({
+    systemInstruction: SENTIMENT_ANALYST_PROMPT
+  });
 
-List positive and negative claims:`;
+  const result = await chat.sendMessage(
+    `Rate the sentiment of this text as positive, negative, or neutral.
+Return JSON: {"sentiment": "...", "confidence": 0.0}
 
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
-}
-
-/**
- * Step 2: CoT Sentiment Analysis & Calibrated Scoring Pass
- */
-async function analyzeCoTSentiment(model, text, claimsText) {
-  const cotPrompt = buildCoTPrompt(
-    "SENTIMENT",
-    `Extracted Claims:\n${claimsText}\n\nOriginal Document Context:\n${text}`
+Text: ${text}`
   );
 
-  const result = await model.generateContent(cotPrompt);
-  return result.response.text().trim();
+  try {
+    return JSON.parse(result.response.text());
+  } catch {
+    return { sentiment: "neutral", confidence: 0.5 };
+  }
 }
 
-/**
- * Full Multi-Stage Sentiment Pipeline Runner
- */
-export async function runSentimentChain(model, text) {
-  console.log("⚡ [SENTIMENT CHAIN] Step 1/2: Extracting factual claims...");
-  const claims = await extractClaims(model, text);
+// Step 2: Deep analysis with chain-of-thought reasoning
+async function deepAnalysis(model, text) {
+  const prompt = buildCoTPrompt(COT_SENTIMENT, { text });
 
-  console.log("⚡ [SENTIMENT CHAIN] Step 2/2: Running CoT sentiment calibration...");
-  const rawAnalysis = await analyzeCoTSentiment(model, text, claims);
+  const chat = model.startChat({
+    systemInstruction: SENTIMENT_ANALYST_PROMPT
+  });
 
-  // Extract score and label via Regex parsing
-  const scoreMatch = rawAnalysis.match(/Score:\s*([+-]?\d+(?:\.\d+)?)/i);
-  const labelMatch = rawAnalysis.match(/Label:\s*([A-Z_]+)/i);
+  const result = await chat.sendMessage(prompt);
 
-  const score = scoreMatch ? parseFloat(scoreMatch[1]) : 0.0;
-  const label = labelMatch ? labelMatch[1].trim() : "NEUTRAL";
+  try {
+    return JSON.parse(result.response.text());
+  } catch {
+    return { step3_overall: "neutral", step4_confidence: 0.5, reasoning: "Could not parse response" };
+  }
+}
 
-  console.log(`✅ [SENTIMENT CHAIN] Analysis Complete. Score: ${score} | Label: ${label}`);
+// Step 3: Compare results and produce final verdict
+function reconcile(quickResult, deepResult) {
+  // If both agree, high confidence
+  const agree = quickResult.sentiment === deepResult.step3_overall;
 
   return {
-    pipeline: "Multi-Stage Sentiment Chain",
-    sentimentScore: score,
-    sentimentLabel: label,
-    extractedClaims: claims,
-    fullCoTTrace: rawAnalysis,
-    analyzedAt: new Date().toISOString()
+    sentiment: deepResult.step3_overall,
+    confidence: agree
+      ? Math.max(quickResult.confidence, deepResult.step4_confidence)
+      : (quickResult.confidence + deepResult.step4_confidence) / 2,
+    methods_agree: agree,
+    quick_result: quickResult,
+    detailed_reasoning: deepResult.reasoning,
+    emotional_words: deepResult.step1_emotional_words || [],
+    analyzed_at: new Date().toISOString()
   };
+}
+
+// Run the full sentiment chain
+export async function runSentimentChain(model, text) {
+  console.log("Step 1: Quick sentiment check...");
+  const quickResult = await quickSentiment(model, text);
+
+  console.log("Step 2: Deep chain-of-thought analysis...");
+  const deepResult = await deepAnalysis(model, text);
+
+  console.log("Step 3: Reconciling results...");
+  const finalResult = reconcile(quickResult, deepResult);
+
+  return finalResult;
 }
 ```
 
@@ -153,8 +116,7 @@ export async function runSentimentChain(model, text) {
 
 ## Key Production Takeaways
 
-1. **Decouple Claims Extraction from Scoring**: Extract positive and negative claims first before asking the model to assign a sentiment score to eliminate subjective bias.
-2. **Calibrate Numerical Scores (-1.0 to +1.0)**: Use continuous floating-point scores ($+0.75$) rather than binary labels ("Positive") to enable fine-grained trend charts and sentiment aggregation.
-3. **Parse Responses Safely via Regex**: Use robust Regular Expressions (`/Score:\s*([+-]?\d+(?:\.\d+)?)/`) to extract numerical scores from CoT reasoning outputs safely.
-4. **Expose Intermediate Claims Payload**: Return `extractedClaims` in API responses so frontend applications can render "Pros vs Cons" UI bullet lists alongside the sentiment score.
-
+1. **Reconciliation Multi-Pass Validation**: Running a fast baseline check alongside a deep CoT analysis pass provides higher confidence than relying on a single inference call.
+2. **Dynamic Confidence Calibration**: When `quickResult` and `deepResult` agree, the system selects `Math.max()` of their confidence scores; if they diverge, it averages them and sets `methods_agree: false`.
+3. **Structured Emotional Word Extraction**: Passing `step1_emotional_words` into the final payload allows frontends to highlight positive and negative terms directly in the UI.
+4. **Resilient JSON Parsing**: Both `quickSentiment` and `deepAnalysis` include defensive `try...catch` blocks to ensure malformed LLM responses return safe fallback objects rather than breaking the microservice.

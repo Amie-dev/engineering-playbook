@@ -1,169 +1,233 @@
-# Module 01: How Large Language Models (LLMs) Work
+# Module 01: How Large Language Models (LLMs) Work — Transformer Architecture, Tokenization, & Sampling Mechanics
 
-## Overview
+## Theoretical Overview & Computational Core
 
-**Large Language Models (LLMs)** like GPT-4, Claude 3.5, and Gemini 1.5 are auto-regressive Transformer neural networks trained on multi-terabyte textual corpora. At their foundational computational core, LLMs are statistical **next-token predictors**. Given an input sequence of tokens (a prompt), an LLM calculates a probability distribution across its vocabulary to predict and generate subsequent tokens iteratively.
-
-Understanding **Transformer Self-Attention Mechanics**, **BPE Tokenization**, **Logits & Softmax Sampling Strategies (Temperature, Top-P, Top-K)**, and **RLHF Alignment** is fundamental to building reliable agentic AI systems.
-
----
-
-## 1. Transformer Architecture & Token Generation Pipeline
+**Large Language Models (LLMs)** like GPT-4o, Claude 3.5, and Gemini 1.5 are auto-regressive Transformer neural networks trained on multi-terabyte textual corpora. At their foundational computational core, LLMs are statistical **next-token predictors**. Given an input sequence of tokens (a prompt), an LLM calculates a probability distribution across its vocabulary to predict and generate subsequent tokens iteratively.
 
 ```mermaid
 flowchart TD
     Prompt[User Input Prompt Text] --> Tokenizer["1. Byte-Pair Encoding (BPE) Tokenizer<br/>Converts string -> Token IDs"]
-
-    Tokenizer --> EmbedLook["2. Token Embedding & Positional Encoding<br/>Maps Token IDs -> Dense Vector Space (d_model = 4096+)"]
-
-    EmbedLook --> TransStack["3. Multi-Head Self-Attention Transformer Layers<br/>Computes Query (Q), Key (K), Value (V) attention weights"]
-
-    TransStack --> LogitsLayer["4. Unnormalized Logits Layer<br/>Generates raw score vector across Vocabulary (|V| = 100k+)"]
-
-    LogitsLayer --> SoftmaxSampling["5. Temperature & Top-P / Top-K Sampling<br/>Scales logits & converts to probability distribution"]
-
-    SoftmaxSampling --> NextToken["6. Autoregressive Next-Token Output<br/>Appends generated token to prompt context loop"]
-
-    NextToken --> Prompt
-
-    style TransStack fill:#dbeafe,stroke:#1d4ed8
-    style SoftmaxSampling fill:#dcfce7,stroke:#15803d
-```
-
----
-
-## 2. Mathematical Sampling Strategies & Parameter Tuning
-
-LLM output behavior is governed by sampling hyperparameters applied to raw output logits $z_i$ prior to the Softmax transformation:
-
-```mermaid
-flowchart TD
-    Logits[Raw Output Logits z_i] --> TempScale["1. Temperature Scaling: z_i / T"]
-
-    TempScale --> TopKFilter["2. Top-K Filtering<br/>Retains top K highest probability logits, truncating the long tail"]
-
-    TopKFilter --> TopPFilter["3. Top-P Nucleus Filtering<br/>Retains smallest subset of logits summing to cumulative prob P (e.g., P=0.9)"]
-
-    TopPFilter --> Softmax["4. Softmax Normalization: P(x_i) = exp(z_i / T) / sum(exp(z_j / T))"]
-
-    Softmax --> SelectedToken["Sampled Next Token Candidate"]
-
-    style TempScale fill:#dbeafe,stroke:#1d4ed8
-    style Softmax fill:#dcfce7,stroke:#15803d
-```
-
-### Sampling Strategy Hyperparameter Matrix
-
-| Parameter | Mathematical Range | Low Value ($0.0 - 0.2$) | High Value ($0.7 - 1.0$) | Primary Production Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| **`Temperature (T)`** | $0.0 \le T \le 2.0$ | **Deterministic & Focused**: Greedy selection ($T \to 0$). Reduces hallucination risk. | **Creative & Diverse**: Flattens probability distribution, increasing variation. | Use $T=0.0$ for JSON extraction, math, and code generation. Use $T=0.7$ for creative drafting. |
-| **`Top-P (Nucleus)`** | $0.0 \le P \le 1.0$ | Cuts off low-probability token tail aggressively. | Includes a broader pool of candidate tokens up to cumulative probability threshold. | Alternative to Temperature tuning; typically set $P=0.9$ while keeping Temperature fixed. |
-| **`Top-K`** | $1 \le K \le |V|$ | Limits choices strictly to top $K$ most likely tokens (e.g. $K=40$). | Allows selection from thousands of candidate tokens. | Prevents model from picking extremely improbable tokens in low-resource settings. |
-
----
-
-## 3. RLHF & Alignment Pipeline (Pre-training to Instruct/Chat Models)
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant Base as Base LLM (Raw Text Completion)
-    participant SFT as Supervised Fine-Tuning (SFT)
-    participant RM as Reward Model (Human Preference Scoring)
-    participant Policy as PPO / DPO Policy Optimization
-    participant Instruct as Instruct/Chat Aligned Model
-
-    Base->>SFT: 1. Train on high-quality Q&A Prompt-Response Pairs
-    SFT->>RM: 2. Collect multi-response rankings from human annotators
-    RM->>Policy: 3. Train Reward Model to score response quality
-    Policy->>Instruct: 4. Optimize model policy using Direct Preference Optimization (DPO)
     
-    note over Instruct: Model becomes safe, helpful, non-toxic, and instruction-following!
+    Tokenizer --> EmbedLook["2. Token Embedding & Positional Encoding<br/>Maps Token IDs -> Dense Vector Space (d_model = 4096+)"]
+    
+    EmbedLook --> TransStack["3. Multi-Head Self-Attention & Feed-Forward Layers<br/>Computes Query (Q), Key (K), Value (V) attention weights"]
+    
+    TransStack --> LogitsLayer["4. Unnormalized Logits Layer<br/>Generates raw score vector across Vocabulary (|V| = 100k+)"]
+    
+    LogitsLayer --> SoftmaxSampling["5. Temperature & Top-P / Top-K Sampling<br/>Scales logits & converts to probability distribution"]
+    
+    SoftmaxSampling --> NextToken["6. Autoregressive Next-Token Output<br/>Appends generated token to prompt context loop"]
+    
+    NextToken --> Prompt
 ```
+
+### Real-World Analogy: Pandit Ji at the Marriage Bureau
+Think of Pandit ji at a traditional matrimonial bureau:
+- **Context Window**: Pandit ji inspects the groom's family background, horoscopes, and preferences (input prompt tokens).
+- **Training Data**: He scans his mental database built over decades of reviewing thousands of past successful marriages (pre-training weights).
+- **Next-Token Prediction**: Based on the current profile, he predicts the single best matching candidate family (next token).
+- **Temperature Dial**: If you ask for a strictly traditional match ($T=0.0$), he gives the most predictable, safe option. If you increase his creativity dial ($T=1.0$), he suggests unconventional, highly creative, but potentially riskier matches.
 
 ---
 
-## 4. Practical Implementation Showcase: Simulated Softmax & Temperature Sampler
+## 1. Transformer Architecture Step-by-Step Pipeline
+
+| Step | Stage Name | Purpose & Mechanics |
+| :--- | :--- | :--- |
+| **1** | **Tokenization** | Converts raw input text into integer token IDs using Byte-Pair Encoding (BPE). |
+| **2** | **Embedding** | Maps discrete token IDs into continuous dense vectors (768 to 12,288 dimensions). |
+| **3** | **Positional Encoding** | Injects positional sine/cosine vectors so the model understands token order. |
+| **4** | **Self-Attention** | Allows every token to attend to every other token in the context window. |
+| **5** | **Feed-Forward Network** | Applies non-linear transformations independently to each token position. |
+| **6** | **Layer Stacking** | Repeats Self-Attention + Feed-Forward blocks $N$ times (GPT-4: $\sim 120$ layers). |
+| **7** | **Output Projection** | Maps final hidden layer states back to raw logit scores over the vocabulary. |
+| **8** | **Sampling** | Selects the next token using Temperature, Top-K, or Top-P probability filtering. |
+
+---
+
+## 2. Self-Attention Mechanics & BPE Tokenization
+
+Self-attention allows the model to dynamically connect related words (e.g. associating "it" with "cat" even 500 tokens prior).
 
 ```javascript
-// Production-grade conceptual Softmax Temperature & Top-P Sampler Engine
-class TokenSamplerEngine {
-  constructor(vocabulary) {
-    this.vocab = vocabulary;
-  }
+// Self-Attention Weight Calculation Simulation
+function simpleAttention(tokens, queryIndex) {
+  const similarities = {
+    "the": { "cat": 0.3, "sat": 0.1, "on": 0.1, "the": 0.05, "mat": 0.3 },
+    "cat": { "the": 0.2, "sat": 0.5, "on": 0.1, "the": 0.05, "mat": 0.3 },
+    "sat": { "the": 0.1, "cat": 0.5, "on": 0.3, "the": 0.05, "mat": 0.2 },
+    "on":  { "the": 0.2, "cat": 0.1, "sat": 0.3, "the": 0.2, "mat": 0.4 },
+    "mat": { "the": 0.3, "cat": 0.4, "sat": 0.2, "on": 0.3, "the": 0.2 },
+  };
 
-  /**
-   * Applies Temperature scaling, Top-P filtering, and Softmax sampling over logits
-   */
-  sampleNextToken(rawLogits, temperature = 0.7, topP = 0.9) {
-    if (temperature === 0.0) {
-      // Greedy Decoding: Pick token with highest logit score
-      let maxIdx = 0;
-      for (let i = 1; i < rawLogits.length; i++) {
-        if (rawLogits[i] > rawLogits[maxIdx]) maxIdx = i;
-      }
-      return { token: this.vocab[maxIdx], probability: 1.0 };
-    }
+  const queryToken = tokens[queryIndex];
+  const scores = tokens.map((t, i) => ({
+    token: t,
+    position: i,
+    attention: (similarities[queryToken] && similarities[queryToken][t]) || 0.1,
+  }));
 
-    // 1. Temperature Scaling
-    const scaledLogits = rawLogits.map((logit) => logit / temperature);
-
-    // 2. Compute Softmax Probabilities
-    const maxLogit = Math.max(...scaledLogits);
-    const expValues = scaledLogits.map((l) => Math.exp(l - maxLogit)); // Subtract max for numerical stability
-    const sumExp = expValues.reduce((a, b) => a + b, 0);
-    let probabilities = expValues.map((v) => v / sumExp);
-
-    // Pair probabilities with vocabulary indices and sort descending
-    let tokenPairs = probabilities
-      .map((prob, index) => ({ token: this.vocab[index], prob, index }))
-      .sort((a, b) => b.prob - a.prob);
-
-    // 3. Apply Top-P (Nucleus) Truncation Filter
-    let cumulativeProb = 0;
-    let cutoffIndex = tokenPairs.length;
-    for (let i = 0; i < tokenPairs.length; i++) {
-      cumulativeProb += tokenPairs[i].prob;
-      if (cumulativeProb >= topP) {
-        cutoffIndex = i + 1;
-        break;
-      }
-    }
-    tokenPairs = tokenPairs.slice(0, cutoffIndex);
-
-    // Re-normalize probabilities after Top-P truncation
-    const truncatedSum = tokenPairs.reduce((sum, item) => sum + item.prob, 0);
-    tokenPairs.forEach((item) => (item.prob /= truncatedSum));
-
-    // 4. Weighted Random Sampling
-    const randomThreshold = Math.random();
-    let acc = 0;
-    for (const item of tokenPairs) {
-      acc += item.prob;
-      if (randomThreshold <= acc) {
-        return { token: item.token, probability: item.prob };
-      }
-    }
-
-    return tokenPairs[0];
-  }
+  // Softmax normalization
+  const expScores = scores.map(s => ({ ...s, exp: Math.exp(s.attention) }));
+  const sumExp = expScores.reduce((sum, s) => sum + s.exp, 0);
+  return expScores.map(s => ({ ...s, weight: (s.exp / sumExp).toFixed(3) }));
 }
 
-// Example Usage
-const vocabulary = ["The", "agent", "executed", "the", "tool", "successfully", "error"];
-const mockLogits = [1.2, 8.5, 4.2, 0.5, 6.1, 3.8, -2.4];
-const sampler = new TokenSamplerEngine(vocabulary);
+// BPE Tokenization Simulation: Iteratively merges frequent character pairs
+function simpleBPE(text, numMerges = 5) {
+  let tokens = text.split("");
+  const mergeLog = [];
 
-console.log("Greedy Choice (T=0.0):", sampler.sampleNextToken(mockLogits, 0.0));
-console.log("Balanced Choice (T=0.7, P=0.9):", sampler.sampleNextToken(mockLogits, 0.7, 0.9));
+  for (let m = 0; m < numMerges; m++) {
+    const pairCounts = {};
+    for (let i = 0; i < tokens.length - 1; i++) {
+      const pair = tokens[i] + "|" + tokens[i + 1];
+      pairCounts[pair] = (pairCounts[pair] || 0) + 1;
+    }
+
+    let bestPair = null, bestCount = 0;
+    for (const [pair, count] of Object.entries(pairCounts)) {
+      if (count > bestCount) { bestPair = pair; bestCount = count; }
+    }
+    if (!bestPair || bestCount < 2) break;
+
+    const [a, b] = bestPair.split("|");
+    const merged = a + b;
+    const newTokens = [];
+    let i = 0;
+    while (i < tokens.length) {
+      if (i < tokens.length - 1 && tokens[i] === a && tokens[i + 1] === b) {
+        newTokens.push(merged); i += 2;
+      } else {
+        newTokens.push(tokens[i]); i++;
+      }
+    }
+    mergeLog.push({ merge: m + 1, pair: `"${a}" + "${b}" -> "${merged}"`, count: bestCount });
+    tokens = newTokens;
+  }
+  return { tokens, mergeLog };
+}
+```
+
+---
+
+## 3. Next-Token Prediction & Markov Probability Distribution
+
+At its core, text generation is an iterative loop sampling from a probability distribution over a vocabulary.
+
+```javascript
+// Next-Token Probability Distribution via Markov Model Simulation
+function buildMarkovModel(corpus) {
+  const model = {};
+  const words = corpus.split(/\s+/);
+  for (let i = 0; i < words.length - 1; i++) {
+    if (!model[words[i]]) model[words[i]] = {};
+    model[words[i]][words[i + 1]] = (model[words[i]][words[i + 1]] || 0) + 1;
+  }
+
+  // Convert raw frequency counts to normalized probabilities
+  for (const word of Object.keys(model)) {
+    const total = Object.values(model[word]).reduce((s, c) => s + c, 0);
+    for (const next of Object.keys(model[word])) {
+      model[word][next] = model[word][next] / total;
+    }
+  }
+  return model;
+}
+```
+
+---
+
+## 4. Sampling Strategies: Temperature, Top-K, & Top-P (Nucleus)
+
+Raw output scores (logits) pass through temperature scaling and probability filtering before selection:
+
+$$\text{P}(x_i) = \frac{\exp(z_i / T)}{\sum_j \exp(z_j / T)}$$
+
+```javascript
+// Temperature Scaling Softmax
+function softmaxWithTemperature(logits, temperature = 1.0) {
+  const scaled = logits.map(l => l / Math.max(temperature, 0.01));
+  const maxLogit = Math.max(...scaled);
+  const exps = scaled.map(l => Math.exp(l - maxLogit)); // Numerical stability adjustment
+  const sumExps = exps.reduce((s, e) => s + e, 0);
+  return exps.map(e => e / sumExps);
+}
+
+// Top-K Filtering: Keeps only the K highest-probability logits
+function topKFilter(probs, k) {
+  const indexed = probs.map((p, i) => ({ p, i })).sort((a, b) => b.p - a.p);
+  const result = new Array(probs.length).fill(0);
+  const topK = indexed.slice(0, k);
+  const sum = topK.reduce((s, x) => s + x.p, 0);
+  topK.forEach(x => { result[x.i] = x.p / sum; });
+  return result;
+}
+
+// Top-P (Nucleus) Filtering: Keeps tokens summing to cumulative probability P
+function topPFilter(probs, p) {
+  const indexed = probs.map((prob, i) => ({ prob, i })).sort((a, b) => b.prob - a.prob);
+  let cumulative = 0;
+  const selected = [];
+  for (const item of indexed) {
+    cumulative += item.prob;
+    selected.push(item);
+    if (cumulative >= p) break;
+  }
+  const result = new Array(probs.length).fill(0);
+  const sum = selected.reduce((s, x) => s + x.prob, 0);
+  selected.forEach(x => { result[x.i] = x.prob / sum; });
+  return result;
+}
+```
+
+---
+
+## 5. Model Families Comparison Matrix
+
+| Model Family | Provider / Maker | Context Window | Key Strengths & Architecture | License Model |
+| :--- | :--- | :--- | :--- | :--- |
+| **GPT-4o** | OpenAI | 128K tokens | Industry gold standard all-rounder, excellent function calling & vision. | Proprietary API |
+| **GPT-4o-mini** | OpenAI | 128K tokens | High speed, extremely cheap token cost, ideal for lightweight agents. | Proprietary API |
+| **Claude 3.5 Sonnet** | Anthropic | 200K tokens | State-of-the-art software engineering, instruction following, safety. | Proprietary API |
+| **Gemini 1.5 Pro** | Google | 1M - 2M tokens | Unmatched context length, native multimodal processing. | Proprietary API |
+| **Llama 3.1 (8B/70B/405B)** | Meta | 128K tokens | Premier open-weight models, fully fine-tunable, privacy-safe. | Open Weights |
+| **Mixtral 8x22B** | Mistral | 65K tokens | Mixture-of-Experts (MoE) architecture, ultra-fast token generation. | Apache 2.0 |
+| **Command R+** | Cohere | 128K tokens | Enterprise RAG optimization, native citation generation. | CC-BY-NC |
+
+---
+
+## 6. Complete Generation Loop Simulation
+
+```javascript
+function generateText(model, startWord, maxTokens = 8, temperature = 0.7) {
+  const generated = [startWord];
+  let current = startWord;
+
+  for (let step = 0; step < maxTokens; step++) {
+    const nextOptions = model[current];
+    if (!nextOptions) break;
+
+    const words = Object.keys(nextOptions);
+    const probs = Object.values(nextOptions);
+    const logitsLocal = probs.map(p => Math.log(p + 0.001));
+
+    const scaledProbs = softmaxWithTemperature(logitsLocal, temperature);
+    const idx = sampleFromDistribution(scaledProbs);
+    current = words[idx];
+    generated.push(current);
+  }
+
+  return generated.join(" ");
+}
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **LLMs Are Autoregressive Predictors**: LLMs generate text token-by-token. Every output token becomes part of the input context for subsequent tokens, causing inference latency to scale linearly ($O(N)$) with output sequence length.
-2. **Use Temperature $0.0$ for Deterministic Agent Workflows**: When generating JSON schemas, parsing tool arguments, or evaluating code, always set `temperature: 0` to eliminate non-deterministic variance.
-3. **Context Window Limits Guard Information Retrieval**: An LLM cannot process infinite text. Models enforce maximum context window limits (e.g. 128k tokens), requiring chunking and RAG for large documents.
-4. **RLHF Alignment Controls Safety**: Pre-trained base models complete text rawly; RLHF/DPO instruction-tuned models convert raw base models into structured, safe conversational agents.
-
+1. **Self-Attention Enables Long Context**: Transformers process all tokens in parallel using Self-Attention, allowing models to correlate words across thousands of tokens.
+2. **Subword BPE Units**: Tokenizers split words into subword fragments. Always account for token counts rather than raw character lengths when computing API costs and context boundaries.
+3. **Emergent Next-Token Prediction**: Reasoning, coding, and conversation are emergent properties of a single core loop: predicting the next token.
+4. **Sampling Parameter Strategy**: Use $T=0.0$ for deterministic agent outputs (JSON generation, math, tool calls) and $T=0.7 - 1.0$ for creative content drafting.
+5. **Model Selection Tradeoffs**: Balance cost, speed, and capability—use mini/haiku models for high-frequency routing and flagship models for complex reasoning.

@@ -2,151 +2,119 @@
 
 ## Overview
 
-Monolithic single-pass summarization prompts often skip intermediate reasoning steps, leading to inaccurate sentiment classification and missed financial statistics. **Chain-of-Thought (CoT)** prompting forces the LLM to output explicit intermediate reasoning steps (**`REASONING:`**) before declaring its final conclusions (**`FINAL SUMMARY:`**), allocating additional generation tokens to unlock deep transformer attention reasoning capabilities.
+Monolithic single-pass summarization prompts often skip intermediate reasoning steps, leading to inaccurate sentiment classification and missed facts. **Chain-of-Thought (CoT)** prompting forces the LLM to output explicit intermediate reasoning steps before declaring its final conclusions, allocating additional generation tokens to unlock deep transformer attention reasoning capabilities.
 
-Understanding **Multi-Step Deductive Analysis**, **Structured Reasoning Tags**, **Sentiment Score Calibration**, and **CoT Prompt Builders** is critical for technical document evaluation.
-
----
-
-## 1. CoT Multi-Step Deductive Pipeline Topology
+In **ChaiPe Analytics**, `src/prompts/chain-of-thought.js` exports step-by-step reasoning prompt templates that enforce **Structured JSON Output**: **`COT_SUMMARIZE`**, **`COT_SENTIMENT`**, **`COT_CATEGORIZE`**, and the variable injector utility **`buildCoTPrompt(template, variables)`**.
 
 ```mermaid
 flowchart TD
-    RawArticle[Raw Article Payload Input] --> CoTCompiler["1. CoT Prompt Compiler<br/>(src/prompts/chain-of-thought.js)"]
+    RawArticle[Raw Article Payload Input] --> CoTCompiler["1. buildCoTPrompt(COT_SUMMARIZE, { article })"]
 
-    subgraph Explicit Sequential Reasoning Steps
-        CoTCompiler --> Step1["Step 1: Extract Entities & Key Events"]
-        Step1 --> Step2["Step 2: Extract Metrics, Dates & Financial Statistics"]
-        Step2 --> Step3["Step 3: Evaluate Tone, Bias & Underlying Sentiment (-1.0 to +1.0)"]
-        Step3 --> Step4["Step 4: Synthesize Final Grounded Conclusion"]
+    subgraph Step-by-Step JSON Reasoning Pipeline
+        CoTCompiler --> Step1["Step 1: Identify Main Topic (step1_topic)"]
+        Step1 --> Step2["Step 2: Extract Key Facts (step2_key_facts)"]
+        Step2 --> Step3["Step 3: Identify Author Conclusion (step3_conclusion)"]
+        Step3 --> Step4["Step 4: Generate Concise Summary (step4_summary)"]
     end
 
-    Step4 --> OutputFormatter["2. Delimited Output Tag Separator<br/>(REASONING vs FINAL SUMMARY)"]
-
-    OutputFormatter --> GroundedSummary[Grounded Executive Summary + Calibrated Sentiment Score]
+    Step4 --> JSONParser["2. JSON Output Parser"]
+    JSONParser --> FinalResult[Structured JSON Response Payload]
 
     style Step1 fill:#dbeafe,stroke:#1d4ed8
     style Step3 fill:#fef3c7,stroke:#b45309
-    style GroundedSummary fill:#dcfce7,stroke:#15803d
+    style FinalResult fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Standard Prompting vs. Chain-of-Thought Performance
+## 1. CoT Prompt Templates & Reasoning Steps Matrix
 
-```mermaid
-flowchart TD
-    AnalysisType[Article Analysis Task] --> Approach{Prompt Design Strategy}
-
-    Approach -- "Direct Single-Pass Output" --> Direct["Direct Completion<br/>- High risk of missed nuances<br/>- High hallucination rate on dense financial metrics<br/>- Coarse binary sentiment labels"]
-
-    Approach -- "Chain-of-Thought (CoT) (RECOMMENDED)" --> CoT["CoT Deduction Engine<br/>- Unpacks 4 explicit reasoning steps<br/>- Near 0% hallucination on extracted metrics<br/>- Continuous fine-grained sentiment score (-1.0 to +1.0)"]
-
-    style CoT fill:#dcfce7,stroke:#15803d
-    style Direct fill:#fee2e2,stroke:#dc2626
-```
-
-### CoT Analysis Prompt Matrix
-
-| CoT Variant | Reasoning Step 1 | Reasoning Step 2 | Target Output Tag | Primary Best Use Case |
+| CoT Constant | Step 1 (Extraction) | Step 2 (Mapping/Direction) | Step 3 (Ranking/Overall) | Step 4 (Final Synthesis) |
 | :--- | :--- | :--- | :--- | :--- |
-| **`COT_SUMMARIZE`** | Extract Entities & Events | Extract Metrics & Dates | `FINAL SUMMARY:` | Complex technical whitepapers, news reports, earnings calls. |
-| **`COT_SENTIMENT`** | Extract Positive/Negative Claims | Evaluate Tone & Bias | `FINAL SENTIMENT:` | Product reviews, brand sentiment monitoring, market news. |
+| **`COT_SUMMARIZE`** | Identify main topic (`step1_topic`) | Extract key facts array (`step2_key_facts`) | Identify main takeaway (`step3_conclusion`) | Generate concise summary (`step4_summary`). |
+| **`COT_SENTIMENT`** | Identify emotional words (`step1_emotional_words`) | Determine positive/negative direction (`step2_directions`) | Assess overall sentiment (`step3_overall`) | Rate confidence 0–1 (`step4_confidence` + `reasoning`). |
+| **`COT_CATEGORIZE`** | Extract domain keywords (`step1_keywords`) | Map to categories (`step2_category_mapping`) | Rank category match counts (`step3_ranking`) | Assign primary & secondary categories (`step4_primary`). |
 
 ---
 
-## 3. Delimited Response Parsing Architecture
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Client as API Route Handler
-    participant CoT as CoT Engine
-    participant LLM as Target LLM Engine
-
-    Client->>CoT: Request /api/cot (text: "Complex Article...")
-    CoT->>LLM: Pass CoT Step-by-Step System Rules + Article
-    
-    LLM-->>CoT: Returns "REASONING: [Steps 1-3] \n\n FINAL SUMMARY: [Summary]"
-    
-    note over CoT: CoT Engine splits response at "FINAL SUMMARY:" tag!
-    CoT-->>Client: Returns JSON: { reasoning: "...", summary: "..." }
-```
-
----
-
-## 4. Code Walkthrough (`src/prompts/chain-of-thought.js`)
+## 2. Complete Source Code Walkthrough (`src/prompts/chain-of-thought.js`)
 
 ```javascript
-/**
- * Chain-of-Thought prompt templates forcing explicit intermediate reasoning steps
- */
-export const COT_SUMMARIZE = `Analyze the provided article by executing these explicit reasoning steps BEFORE generating the final summary:
+// Chain-of-thought prompts force the model to show its reasoning step by step
 
-Step 1 - Core Entities & Events: List the main organizations, products, key figures, and primary actions.
-Step 2 - Metrics & Quantitative Data: Extract all explicit numbers, percentages, financial statistics, and dates.
-Step 3 - Technical & Strategic Impact: Determine why this development matters for the industry.
-Step 4 - Executive Brief Synthesis: Draft a 3-bullet point summary based strictly on Steps 1-3.
+export const COT_SUMMARIZE = `Analyze this article step by step:
 
-Format your output EXACTLY using these header tags:
+Step 1 - Identify the main topic: What is this article primarily about?
+Step 2 - Extract key facts: List the 3-5 most important facts or data points.
+Step 3 - Identify the author's conclusion: What is the main takeaway?
+Step 4 - Generate summary: Write a concise summary using the above analysis.
 
-REASONING TRACE:
-- Entities & Events: <step 1 analysis>
-- Key Metrics: <step 2 analysis>
-- Industry Impact: <step 3 analysis>
+Article to analyze:
+{article}
 
-FINAL EXECUTIVE SUMMARY:
-<your 3 bullet points from step 4>
-`;
+Respond in this JSON format:
+{
+  "step1_topic": "...",
+  "step2_key_facts": ["...", "..."],
+  "step3_conclusion": "...",
+  "step4_summary": "..."
+}`;
 
-export const COT_SENTIMENT = `Perform deep sentiment analysis on the text by executing these explicit reasoning steps:
+export const COT_SENTIMENT = `Analyze the sentiment of this text step by step:
 
-Step 1 - Positive vs. Negative Claims: Identify key optimistic and critical assertions.
-Step 2 - Language Tone & Objectivity: Evaluate whether the language is promotional, critical, or neutral.
-Step 3 - Score Calculation: Assign a continuous sentiment score from -1.0 (extremely negative) to +1.0 (extremely positive).
+Step 1 - Identify emotional words: List words or phrases that carry emotional weight.
+Step 2 - Determine direction: Is each emotional word positive, negative, or neutral?
+Step 3 - Assess overall tone: Considering all words together, what is the overall sentiment?
+Step 4 - Rate confidence: How confident are you in this assessment (0-1)?
 
-Format your output EXACTLY as follows:
+Text to analyze:
+{text}
 
-REASONING TRACE:
-<step-by-step tone and claims evaluation>
+Respond in this JSON format:
+{
+  "step1_emotional_words": [{"word": "...", "emotion": "..."}],
+  "step2_directions": [{"word": "...", "direction": "positive|negative|neutral"}],
+  "step3_overall": "positive|negative|neutral",
+  "step4_confidence": 0.0,
+  "reasoning": "..."
+}`;
 
-FINAL SENTIMENT:
-Score: <numeric score from -1.0 to +1.0>
-Label: <VERY_NEGATIVE | NEGATIVE | NEUTRAL | POSITIVE | VERY_POSITIVE>
-Rationale: <1-sentence summary of sentiment justification>
-`;
+export const COT_CATEGORIZE = `Classify this content step by step:
 
-/**
- * Compiles a Chain-of-Thought prompt payload
- */
-export function buildCoTPrompt(cotTypeKey, articleText) {
-  const template = cotTypeKey === "SENTIMENT" ? COT_SENTIMENT : COT_SUMMARIZE;
-  const sanitizedText = articleText.trim();
+Step 1 - Identify keywords: What are the domain-specific terms in the text?
+Step 2 - Map to categories: Which categories do these keywords belong to?
+Step 3 - Rank categories: Which category has the most keyword matches?
+Step 4 - Final classification: Pick the best primary and secondary categories.
 
-  return `${template}
+Categories: Technology, Business, Sports, Entertainment, Politics, Science, Health, Education, Lifestyle
 
-### ARTICLE PAYLOAD TO ANALYZE
-<article_to_analyze>
-${sanitizedText}
-</article_to_analyze>
+Text to classify:
+{text}
 
-Begin Analysis:`;
+Respond in this JSON format:
+{
+  "step1_keywords": ["...", "..."],
+  "step2_category_mapping": [{"keyword": "...", "category": "..."}],
+  "step3_ranking": [{"category": "...", "match_count": 0}],
+  "step4_primary": "...",
+  "step4_secondary": ["..."]
+}`;
+
+// Helper to fill in the template with actual content
+export function buildCoTPrompt(template, variables) {
+  let prompt = template;
+  for (const [key, value] of Object.entries(variables)) {
+    prompt = prompt.split(`{${key}}`).join(value);
+  }
+  return prompt;
 }
-
-// Execution Verification Example
-const sampleArticle = "Quarterly revenue surged 24% to $4.2B, but supply chain delays reduced gross margins by 3%.";
-const compiledCoTPayload = buildCoTPrompt("SUMMARIZE", sampleArticle);
-
-console.log("Compiled Chain-of-Thought Prompt Contract:\n");
-console.log(compiledCoTPayload);
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Force Delimited Reasoning Header Tags**: Require the LLM to output explicit headers (`REASONING TRACE:` and `FINAL EXECUTIVE SUMMARY:`) so backend code can parse reasoning steps separately from final answers.
-2. **Prevent Premature Deductions on Complex Data**: For dense technical or financial text, CoT prompting reduces extraction errors by over $75\%$ compared to single-pass direct completion.
-3. **Log Reasoning Traces for Auditability**: Store `REASONING TRACE` logs in telemetry systems so domain experts can audit how the LLM arrived at specific summary conclusions.
-4. **Combine CoT with Score Calibration**: Use CoT for sentiment analysis to force the model to list positive and negative claims before assigning a numerical sentiment score ($-1.0$ to $+1.0$).
-
+1. **Enforce JSON Contracts Across Reasoning Steps**: Asking the model to return JSON objects containing explicit keys (`step1_topic`, `step2_key_facts`, `step3_overall`) makes intermediate reasoning steps programmatically accessible to backend microservices.
+2. **Template Interpolation Helper**: The `buildCoTPrompt` utility replaces `{text}` or `{article}` placeholders cleanly using simple string replacement.
+3. **Improves Sentiment Classification Precision**: By requiring the model to identify emotional words in Step 1 and direction in Step 2 before scoring in Step 3, CoT eliminates impulsive sentiment labeling errors.
+4. **Transparent Auditability**: Backend systems can log `reasoning` and intermediate `step1_keywords` to inspect *why* an article was categorized under a particular topic.

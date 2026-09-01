@@ -1,182 +1,215 @@
-# Module 12: Memory Systems, Conversation Buffers, and Long-Term Vector Recall
+# Module 12: Agent Memory Systems — Conversation Buffer, Sliding Window, Summary, Entity, Vector, & MongoDB Persistence
 
-## Overview
+## Theoretical Overview & Memory System Architecture
 
-Autonomous agents require multi-tiered **Memory Systems** to maintain state, recall user preferences across sessions, and prevent context window saturation. Agent memory is divided into three distinct functional tiers: **Short-Term Memory** (transient sliding-window conversation buffer), **Long-Term Memory** (persistent vector-backed semantic recall), and **Episodic Memory** (historical logs of past execution trajectories).
-
-Understanding **Memory Taxonomies**, **Sliding-Window vs. Summary-Buffer Compaction Algorithms**, **Vector-Backed Knowledge Retrieval**, and **Episodic Learning** is critical for long-running AI agents.
-
----
-
-## 1. Multi-Tiered Agent Memory System Architecture
+Every API call to a Large Language Model is inherently **stateless**. An LLM possesses no internal memory between requests—it treats every API call as an isolated event. To build conversational AI agents, personalized assistants, and multi-turn workflows, applications must engineer an **External Memory System** that injects historical context, user preferences, and retrieved facts into the prompt payload before dispatching the request.
 
 ```mermaid
 flowchart TD
-    UserMsg[User Message Input] --> AgentCore[Agent Orchestrator Core]
-
-    subgraph Multi-Tiered Memory Architecture
-        AgentCore --> ShortTerm["1. Short-Term Memory (In-Context Window)<br/>- Active conversation message array<br/>- Managed via Sliding Window or Summary Compaction"]
-        
-        AgentCore --> LongTerm["2. Long-Term Semantic Memory (Vector Store)<br/>- Persists user preferences, facts, & domain rules<br/>- Retrieved dynamically via Cosine Vector Search"]
-
-        AgentCore --> Episodic["3. Episodic Memory (Trajectory Logs)<br/>- Records historical ReAct execution trajectories<br/>- Enables learning from past agent tool errors & successes"]
-
-        AgentCore --> Procedural["4. Procedural Memory (Skill Registry)<br/>- System prompt instructions, tool schemas, & workflow rules"]
+    UserMsg[User Message Payload] --> MemoryEngine{"Combined Memory Engine"}
+    
+    subgraph Multi-Layer Memory Systems
+        MemoryEngine --> BufferWin["1. Sliding Window Memory<br/>(Last N Messages in full)"]
+        MemoryEngine --> SummaryMem["2. Summary Memory<br/>(LLM-condensed history of older turns)"]
+        MemoryEngine --> EntityMem["3. Entity Memory<br/>(Structured key-value facts about users/entities)"]
+        MemoryEngine --> VectorMem["4. Vector / Semantic Memory<br/>(Cosine similarity lookup on past conversations)"]
     end
-
-    ShortTerm --> LLMPrompt[Assembled LLM Context Payload]
-    LongTerm --> LLMPrompt
-    Procedural --> LLMPrompt
-
-    style ShortTerm fill:#dbeafe,stroke:#1d4ed8
-    style LongTerm fill:#dcfce7,stroke:#15803d
-    style Episodic fill:#fef3c7,stroke:#b45309
+    
+    BufferWin --> PromptAssembler["Prompt Builder Engine"]
+    SummaryMem --> PromptAssembler
+    EntityMem --> PromptAssembler
+    VectorMem --> PromptAssembler
+    
+    PromptAssembler --> LLMAPI["LLM Provider API Gateway"]
+    
+    LLMAPI --> Response["Assistant Response"]
+    Response --> MongoStore["5. MongoDB Persistence Store<br/>(Save session history to disk bahi-khata)"]
 ```
+
+### Real-World Analogy: Kirana Store Owner Sharma-Ji
+Think of Sharma-ji, who has run a grocery (*kirana*) store in Chandni Chowk for 40 years:
+- **Conversation Buffer (Short-Term Memory)**: Sharma-ji remembers every word spoken during your current visit ("Add Parle-G for my grandson").
+- **Sliding Window (Recent History)**: He remembers your last 3 visits this week without needing his ledger.
+- **Summary Memory**: He condenses 40 years of interactions into: *"Gupta-ji buys Tata Salt and Aashirvaad Atta monthly."*
+- **Entity Memory**: He maintains specific facts: *"Gupta-ji lives in B-12; his grandson is Rohit; he owes ₹200."*
+- **Vector / Semantic Memory**: When asked about wedding catering, he recalls similar past situations: *"Ah! Mehta-ji ordered 20 kg kaju katli for his daughter's wedding last year."*
+- **MongoDB Persistence (Ledger Bahi-Khata)**: He writes down every transaction in his physical ledger book so nothing is lost when the shop closes for the night.
 
 ---
 
-## 2. Short-Term Memory Management Strategies
+## 1. Memory Architectures Comparison Matrix (`Section 1`)
 
-```mermaid
-flowchart TD
-    StrategyChoice[Short-Term Context Strategy] --> Model{Compaction Algorithm}
-
-    Model -- "1. Sliding Window Buffer" --> Sliding["Sliding Window Buffer<br/>- Retains last K messages (e.g. K=10)<br/>- Evicts oldest messages when window exceeds limit<br/>- HAZARD: Loses early conversation instructions!"]
-
-    Model -- "2. Summary-Buffer Compaction (RECOMMENDED)" --> Summary["Summary-Buffer Compaction<br/>- Uses background LLM call to condense older messages into a summary block<br/>- Combines Summary Block + Last K raw messages<br/>- Retains long-term context with fixed low token count!"]
-
-    style Summary fill:#dcfce7,stroke:#15803d
-    style Sliding fill:#fee2e2,stroke:#dc2626
-```
-
-### Memory Tier Functional Comparison Matrix
-
-| Memory Tier | Storage Infrastructure | Lifespan / TTL | Retrieval Mechanism | Primary Operational Purpose |
+| Memory Strategy | Technical Mechanism | Primary Advantage | Primary Disadvantage | Recommended Use Case |
 | :--- | :--- | :--- | :--- | :--- |
-| **Short-Term Memory** | RAM Array / Redis Cache | Active Session | Sequential Sliding Index | Contextual coherence during active multi-turn conversation. |
-| **Long-Term Memory** | Vector Database (Qdrant/Pinecone) | Permanent | Vector Similarity Search | Recalling user profile facts, preferences, and domain data. |
-| **Episodic Memory** | Document Store (MongoDB / Postgres) | Permanent | Key-Lookup / Metric Query | Learning from past agent execution trajectories & tool errors. |
-| **Procedural Memory** | Code Base / System Prompts | Static | Programmatic Import | Instructing agent on tool schemas and operational workflow rules. |
+| **Conversation Buffer** | Appends raw messages to an array sent with every API call. | $100\%$ exact recall of every message. | Context window fills quickly; high token costs. | Short 3-5 turn customer service chats. |
+| **Sliding Window** | Retains only the last $N$ messages (e.g. last 6 turns). | Fixed, predictable token consumption. | Forgets old information past the window boundary. | Standard multi-turn chatbots. |
+| **Summary Memory** | LLM condenses older messages into a summary block when threshold is exceeded. | Retains historical context in minimal tokens. | Slight risk of summary detail loss. | Long multi-hour support sessions. |
+| **Entity Memory** | Extracts & tracks structured key-value facts about named entities. | Excellent personalization (names, preferences, rules). | Requires NER / entity extraction logic. | Personal AI assistants, CRM tools. |
+| **Vector Memory** | Embeds past messages and retrieves semantically similar turns via Cosine Sim. | Recalls relevant facts across months of history. | Vector search infrastructure required. | Long-term user memory across sessions. |
+| **MongoDB Persistence** | Persists conversation sessions & vector embeddings to disk storage. | Survives application restarts & crashes. | Disk I/O latency. | Production enterprise databases. |
 
 ---
 
-## 3. Long-Term Memory Retrieval & Insertion Lifecycle
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor User as User Client
-    participant Agent as Agent Memory Manager
-    participant VDB as Long-Term Vector DB
-    participant LLM as LLM Core
-
-    note over User,VDB: INSERTION PHASE (Fact Extraction)
-    User->>Agent: "My favorite programming language is TypeScript."
-    Agent->>LLM: Extract Key User Facts
-    LLM-->>Agent: Returns JSON: { key: "fav_lang", fact: "User prefers TypeScript" }
-    Agent->>VDB: Generate Embedding & Upsert Fact into Vector Store
-
-    note over User,VDB: RETRIEVAL PHASE (Subsequent Session)
-    User->>Agent: "Write a code snippet for my preferred stack."
-    Agent->>VDB: Query Vector DB for User Preferences
-    VDB-->>Agent: Returns Fact: "User prefers TypeScript"
-    Agent->>LLM: Pass Prompt + Injected Long-Term Fact
-    LLM-->>User: "Here is your code snippet written in TypeScript..."
-```
-
----
-
-## 4. Practical Implementation Showcase: Enterprise Summary-Buffer Memory Manager
+## 2. Memory Implementation Components (`Sections 2–6`)
 
 ```javascript
-class SummaryBufferMemoryManager {
-  constructor(llmClient, options = {}) {
-    this.client = llmClient;
-    this.maxRecentMessages = options.maxRecentMessages || 4;
-    this.runningSummary = "";
-    this.recentMessages = []; // { role, content }
+// 1. Sliding Window Memory (Keeps last N turns)
+class SlidingWindowMemory {
+  constructor(windowSize = 6) {
+    this.messages = [];
+    this.windowSize = windowSize;
   }
 
-  /**
-   * Adds a new message turn and triggers automatic summarization if window overflows
-   */
-  async addMessage(role, content) {
-    this.recentMessages.push({ role, content, timestamp: Date.now() });
-    console.log(`📥 [MEMORY INGESTED] [${role.toUpperCase()}]: "${content.substring(0, 40)}..."`);
+  addMessage(role, content) {
+    this.messages.push({ role, content });
+    if (this.messages.length > this.windowSize) {
+      return { dropped: this.messages.shift() };
+    }
+    return { dropped: null };
+  }
 
-    // Check if recent message buffer exceeds threshold
-    if (this.recentMessages.length > this.maxRecentMessages) {
-      await this._compactMemory();
+  getMessages() { return [...this.messages]; }
+}
+
+// 2. Summary Memory (Condenses old turns via LLM)
+class SummaryMemory {
+  constructor(maxBeforeSummary = 6, keepRecent = 4) {
+    this.messages = [];
+    this.summaries = [];
+    this.maxBeforeSummary = maxBeforeSummary;
+    this.keepRecent = keepRecent;
+  }
+
+  addMessage(role, content) {
+    this.messages.push({ role, content });
+    if (this.messages.length > this.maxBeforeSummary) {
+      this._summarize();
     }
   }
 
-  /**
-   * Summarizes older messages and updates the running summary
-   */
-  async _compactMemory() {
-    const overflowCount = this.recentMessages.length - this.maxRecentMessages;
-    const messagesToSummarize = this.recentMessages.splice(0, overflowCount);
-
-    console.log(`⚡ [MEMORY COMPACTION] Condensing ${messagesToSummarize.length} older messages into Running Summary...`);
-
-    const textToSummarize = messagesToSummarize.map((m) => `${m.role}: ${m.content}`).join("\n");
-
-    const summaryPrompt = `You are a Memory Compactor. Condense the following conversation history into a concise factual summary block.
-CURRENT SUMMARY: "${this.runningSummary || "None"}"
-MESSAGES TO ADD:
-${textToSummarize}
-
-UPDATED COMPACT SUMMARY:`;
-
-    this.runningSummary = await this.client.generateCompletion(summaryPrompt);
-    console.log(`📝 [NEW RUNNING SUMMARY]: "${this.runningSummary}"`);
+  _summarize() {
+    const oldMessages = this.messages.slice(0, -this.keepRecent);
+    const summaryText = oldMessages.map(m => `${m.role}: ${m.content}`).join(" | ");
+    this.summaries.push(`[Previous conversation summary: ${summaryText.slice(0, 150)}...]`);
+    this.messages = this.messages.slice(-this.keepRecent);
   }
 
-  /**
-   * Compiles complete context array ready for LLM consumption
-   */
-  getCompiledContext() {
-    const context = [];
-
-    if (this.runningSummary) {
-      context.push({
-        role: "system",
-        content: `SUMMARY OF PAST CONVERSATION:\n${this.runningSummary}`
-      });
-    }
-
-    return context.concat(this.recentMessages);
+  getMessages() {
+    const summaryMsg = this.summaries.length > 0 ? [{ role: "system", content: this.summaries.join("\n") }] : [];
+    return [...summaryMsg, ...this.messages];
   }
 }
 
-// Simulated LLM Client
-const mockLLMClient = {
-  generateCompletion: async (prompt) => {
-    return "User is Priya. She works as a Senior Backend Engineer and is configuring Express API Gateways.";
+// 3. Entity Memory (Key-Value Fact Tracker)
+class EntityMemory {
+  constructor() { this.entities = {}; }
+
+  update(entityName, facts) {
+    if (!this.entities[entityName]) this.entities[entityName] = {};
+    Object.assign(this.entities[entityName], facts);
   }
+
+  getContextString() {
+    return Object.entries(this.entities).map(([name, facts]) => {
+      const factStr = Object.entries(facts).map(([k, v]) => `${k}: ${v}`).join(", ");
+      return `${name}: ${factStr}`;
+    }).join("\n");
+  }
+}
+```
+
+---
+
+## 3. MongoDB Persistence Layer (`Section 7`)
+
+```javascript
+// MongoDB Document Schema & Storage Interface
+const conversationSchema = {
+  sessionId: "session_abc123",
+  userId: "gupta_ji",
+  messages: [
+    { role: "user", content: "Give me salt", timestamp: "2024-03-15T10:00:00Z" },
+    { role: "assistant", content: "Tata Salt Rs. 28", timestamp: "2024-03-15T10:00:01Z" }
+  ],
+  summary: "Gupta-ji bought salt and atta. Monthly customer.",
+  entities: { "Gupta-ji": { usualOrder: ["salt", "atta"], grandson: "Rohit" } },
+  updatedAt: "2024-03-15T10:05:00Z"
 };
 
-// Execution Test
-async function testMemory() {
-  const memory = new SummaryBufferMemoryManager(mockLLMClient, { maxRecentMessages: 2 });
+class MongoMemoryStore {
+  constructor() { this.db = new Map(); } // Simulated Mongo Connection
 
-  await memory.addMessage("user", "Hi, my name is Priya.");
-  await memory.addMessage("assistant", "Hello Priya! Nice to meet you.");
-  await memory.addMessage("user", "I am building an Express API Gateway.");
-  await memory.addMessage("assistant", "Great! Are you using rate limiting?");
+  async saveConversation(sessionId, messages, summary, entities) {
+    const doc = { sessionId, messages, summary, entities, updatedAt: new Date().toISOString() };
+    this.db.set(sessionId, doc);
+    return doc;
+  }
 
-  console.log("\nCompiled Context Payload:\n", JSON.stringify(memory.getCompiledContext(), null, 2));
+  async loadConversation(sessionId) {
+    return this.db.get(sessionId) || null;
+  }
 }
+```
 
-testMemory();
+---
+
+## 4. Orchestrating a Combined Memory Prompt (`Section 8`)
+
+Production agents combine all memory layers into a unified prompt assembly pipeline:
+
+```javascript
+class CombinedMemory {
+  constructor() {
+    this.buffer = new SlidingWindowMemory(6);
+    this.summary = new SummaryMemory(8, 4);
+    this.entities = new EntityMemory();
+    this.vectors = new VectorMemory();
+  }
+
+  addInteraction(role, content) {
+    this.buffer.addMessage(role, content);
+    this.summary.addMessage(role, content);
+    if (role === "user") this.vectors.store(content, { role });
+  }
+
+  buildPrompt(currentUserMessage) {
+    const parts = [];
+
+    // 1. System Base Prompt
+    parts.push({ role: "system", content: "You are Sharma-ji, a Kirana store owner." });
+
+    // 2. Entity Context (Key-Value Facts)
+    const entityCtx = this.entities.getContextString();
+    if (entityCtx) parts.push({ role: "system", content: `Known customer facts:\n${entityCtx}` });
+
+    // 3. Relevant Vector Memory (Semantic Search)
+    const relevant = this.vectors.retrieve(currentUserMessage, 2);
+    if (relevant.length > 0) {
+      parts.push({ role: "system", content: `Relevant past interactions:\n${relevant.map(r => r.text).join("\n")}` });
+    }
+
+    // 4. Conversation Summary
+    const summaryMsgs = this.summary.getMessages();
+    const summaryPart = summaryMsgs.find(m => m.role === "system" && m.content.includes("summary"));
+    if (summaryPart) parts.push(summaryPart);
+
+    // 5. Sliding Window Messages
+    parts.push(...this.buffer.getMessages());
+
+    // 6. Current User Input
+    parts.push({ role: "user", content: currentUserMessage });
+
+    return parts;
+  }
+}
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Use Summary-Buffer Memory for Long Conversations**: Plain sliding window memory drops older context completely. Summary-Buffer memory condenses older turns into a running summary block, preserving context with minimal token overhead.
-2. **Extract Facts for Long-Term Vector Memory**: Don't dump entire conversation transcripts into vector databases. Use an extraction prompt to extract concise entity facts (`{ entity: "user", attribute: "locale", value: "en-US" }`) before storing.
-3. **Log Trajectories for Episodic Memory**: Store complete ReAct execution logs (`Goal`, `Thoughts`, `Actions`, `Observations`) in a document store to analyze agent failures and fine-tune future workflows.
-4. **Isolate Memory by User Session & Tenant**: Always partition memory stores by `user_id` and `session_id` to prevent user context cross-contamination and data privacy breaches.
-
+1. **LLMs Are Stateless**: Every API request must supply all necessary conversational history, facts, and context inside the prompt payload.
+2. **Use Sliding Windows to Control Token Costs**: Limit conversation history to the last $N$ turns (e.g. 6 messages) to maintain low token costs.
+3. **Summarize Long Sessions**: Automatically trigger LLM summarization when message counts exceed limits to preserve historical context without blowing context budgets.
+4. **Leverage Entity Memory for Personalization**: Store specific key-value facts about users (names, preferences, transaction limits) in structured entity tables.
+5. **Persist State to Disk with MongoDB**: Save user session states and vector embeddings to MongoDB so agent memory survives server restarts and crashes.

@@ -2,30 +2,37 @@
 
 ## Overview
 
-Monolithic single-pass prompts attempting to read, analyze, categorize, and format a multi-page document in one step often suffer from context dilution and missed details. The **4-Step Summarization Chain** decomposes document processing into a sequence of four modular LLM passes: **Extract Key Facts** $\rightarrow$ **Classify Category & Urgency** $\rightarrow$ **Draft Executive Summary** $\rightarrow$ **Format Final Structured Brief**.
+Monolithic single-pass prompts attempting to read, analyze, categorize, and format a multi-page document in one step often suffer from context dilution and missed details. The **4-Step Summarization Chain** decomposes document processing into a sequence of four modular LLM passes: **Extract Key Points** $\rightarrow$ **Classify Topic** $\rightarrow$ **Generate Summary** $\rightarrow$ **Format Output Payload**.
 
-Understanding **Sequential Intermediate State Passing**, **Context Transformation Pipelines**, **Step-Level Debuggability**, and **Async Chain Execution** is essential for high-reliability AI pipelines.
-
----
-
-## 1. 4-Step Sequential Pipeline Architecture
+In **ChaiPe Analytics**, `src/chains/summarize-chain.js` implements this modular pipeline using Gemini SDK chats with role system instructions (`SUMMARIZER_PROMPT` and `CONTENT_CLASSIFIER_PROMPT`).
 
 ```mermaid
 flowchart TD
-    RawArticle[Raw Article Payload Input] --> Step1["Step 1: Extract Key Facts & Entities<br/>(Extracts top 5 verifiable statistics & organization names)"]
+    RawArticle[Raw Article Payload Input] --> Step1["Step 1: Extract Key Points<br/>(extractKeyPoints: returns JSON array of strings)"]
 
-    Step1 -->|Intermediate State: factsText| Step2["Step 2: Classify Domain Category & Urgency<br/>(Assigns category: Tech/Finance/Health & urgency level)"]
+    Step1 -->|Intermediate State: keyPoints| Step2["Step 2: Classify Topic<br/>(classifyTopic: returns primary & secondary categories)"]
 
-    Step2 -->|Intermediate State: categoryText| Step3["Step 3: Draft Executive Summary<br/>(Synthesizes 3 bullet points from facts & category context)"]
+    Step2 -->|Intermediate State: classification| Step3["Step 3: Generate Concise Summary<br/>(generateSummary: text under 150 words)"]
 
-    Step3 -->|Intermediate State: draftSummary| Step4["Step 4: Format Final Structured Brief<br/>(Formats clean Markdown/JSON payload)"]
+    Step3 -->|Intermediate State: summary| Step4["Step 4: Format Final Output Envelope<br/>(formatOutput: summary, key_points, classification, word_count, timestamp)"]
 
-    Step4 --> DeliveredPackage[Final 4-Step Summarization Package Delivered]
+    Step4 --> FinalOutput[Final 4-Step Summarization Package Delivered]
 
     style Step1 fill:#dbeafe,stroke:#1d4ed8
     style Step3 fill:#fef3c7,stroke:#b45309
-    style DeliveredPackage fill:#dcfce7,stroke:#15803d
+    style FinalOutput fill:#dcfce7,stroke:#15803d
 ```
+
+---
+
+## 1. Sequential Pipeline Step Feature Matrix
+
+| Step Function | Model System Instruction | Input Payload | Output Payload | Resilience / Fallback Strategy |
+| :--- | :--- | :--- | :--- | :--- |
+| **`extractKeyPoints`** | `SUMMARIZER_PROMPT` | Raw Article Text | JSON array of key point strings | `try { JSON.parse() } catch { return [text] }` |
+| **`classifyTopic`** | `CONTENT_CLASSIFIER_PROMPT` | `keyPoints` array | `{ primary_category, secondary_categories }` | Default: `{ primary_category: "General", secondary_categories: [] }` |
+| **`generateSummary`** | `SUMMARIZER_PROMPT` | Article + `keyPoints` + `primary_category` | Concise summary string (<150 words) | Directly returns generated text |
+| **`formatOutput`** | None (Pure JS function) | `keyPoints` + `classification` + `summary` | Final aggregated object | Computes `word_count` & ISO timestamp |
 
 ---
 
@@ -34,131 +41,130 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Runner as Chain Runner (runSummarizeChain)
-    participant Step1 as Step 1 (Fact Extractor)
-    participant Step2 as Step 2 (Category Classifier)
-    participant Step3 as Step 3 (Summary Drafter)
-    participant LLM as Google Gemini SDK
+    actor Runner as Chain Orchestrator (runSummarizeChain)
+    participant Step1 as extractKeyPoints
+    participant Step2 as classifyTopic
+    participant Step3 as generateSummary
+    participant Step4 as formatOutput
+    participant LLM as Gemini Model Chat
 
-    Runner->>Step1: Pass Raw Article
-    Step1->>LLM: "Extract top 5 verifiable facts from text..."
-    LLM-->>Step1: Return factsText: ["1. Q4 Revenue +24%", "2. Released Gemini 1.5 Pro"]
+    Runner->>Step1: Pass Raw Article Text
+    Step1->>LLM: Pass SUMMARIZER_PROMPT + "Extract key points as JSON array..."
+    LLM-->>Step1: Return JSON array string
+    Step1-->>Runner: Return keyPoints array
 
-    Runner->>Step2: Pass factsText
-    Step2->>LLM: "Classify Category & Urgency based on facts..."
-    LLM-->>Step2: Return categoryText: "Category: Tech/AI | Urgency: HIGH"
+    Runner->>Step2: Pass keyPoints
+    Step2->>LLM: Pass CONTENT_CLASSIFIER_PROMPT + "Classify topic based on key points..."
+    LLM-->>Step2: Return JSON classification
+    Step2-->>Runner: Return classification object
 
-    Runner->>Step3: Pass (factsText + categoryText)
-    Step3->>LLM: "Draft 3-bullet executive summary using category & facts..."
-    LLM-->>Step3: Return draftSummary: "• Revenue grew 24%..."
+    Runner->>Step3: Pass (Article + keyPoints + primary_category)
+    Step3->>LLM: Pass SUMMARIZER_PROMPT + "Generate concise summary <150 words..."
+    LLM-->>Step3: Return summary string
+    Step3-->>Runner: Return summary text
 
-    Runner-->>Runner: Assemble Final Object: { facts, category, summary }
-```
-
-### Sequential Pipeline Step Feature Matrix
-
-| Step Index | Step Function | Input Payload | Output Artifact | Key Advantage |
-| :--- | :--- | :--- | :--- | :--- |
-| **Step 1** | Fact Extraction | Raw Article Text | 5 Grounded Fact Statements | Strips filler text; isolates core numbers & entities. |
-| **Step 2** | Domain Classification | Extracted Facts | Category & Urgency Tags | Sets context framing for downstream summary tone. |
-| **Step 3** | Summary Drafting | Facts + Category Context | 3 Draft Bullet Points | Synthesizes facts without hallucinating external details. |
-| **Step 4** | Final Formatting | Draft Summary | Structured Markdown/JSON | Enforces strict schema formatting & clean presentation. |
-
----
-
-## 3. Intermediate State Inspection & Debugging Pipeline
-
-```mermaid
-flowchart TD
-    ChainExec[Execute 4-Step Chain] --> Trace1["Log Step 1 Output (factsText)"]
-    Trace1 --> Trace2["Log Step 2 Output (categoryText)"]
-    Trace2 --> Trace3["Log Step 3 Output (draftSummary)"]
-
-    Trace3 --> StepInspector{Did any step produce malformed data?}
-
-    StepInspector -- "Yes (Step 2 Failed)" --> ReTryStep2["Isolated Step 2 Retry Pass<br/>(Zero need to re-run Step 1!)"]
-
-    StepInspector -- "No (All Steps Passed)" --> ReturnFinal["Deliver Unified Pipeline Package"]
-
-    style ReturnFinal fill:#dcfce7,stroke:#15803d
-    style ReTryStep2 fill:#fef3c7,stroke:#b45309
+    Runner->>Step4: Pass (keyPoints, classification, summary)
+    Step4-->>Runner: Return formatted response envelope
 ```
 
 ---
 
-## 4. Code Walkthrough (`src/chains/summarize-chain.js`)
+## 3. Complete Source Code Walkthrough (`src/chains/summarize-chain.js`)
 
 ```javascript
-/**
- * Step 1: Extracts verifiable facts and statistics from article
- */
-async function stepExtractFacts(model, articleText) {
-  const prompt = `Extract top 5 verifiable facts, quantitative statistics, and core entities from this article:
+// 4-step summarization chain: extract → classify → summarize → format
 
-ARTICLE TEXT:
-"""
-${articleText}
-"""
+import { SUMMARIZER_PROMPT, CONTENT_CLASSIFIER_PROMPT } from "../prompts/system-prompts.js";
 
-List exactly 5 facts:`;
+// Step 1: Extract key points from the article
+async function extractKeyPoints(model, article) {
+  const chat = model.startChat({
+    systemInstruction: SUMMARIZER_PROMPT
+  });
 
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
+  const result = await chat.sendMessage(
+    `Extract the key points from this article as a JSON array of strings.
+Only return the JSON array, nothing else.
+
+Article: ${article}`
+  );
+
+  const text = result.response.text();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    // If the model didn't return clean JSON, wrap the text
+    return [text];
+  }
 }
 
-/**
- * Step 2: Classifies category domain and urgency level
- */
-async function stepClassifyCategory(model, factsText) {
-  const prompt = `Based strictly on these extracted facts, classify the primary domain category (e.g. Technology, Finance, Healthcare, Hardware) and urgency priority (HIGH, MEDIUM, LOW).
+// Step 2: Classify the topic based on extracted points
+async function classifyTopic(model, keyPoints) {
+  const chat = model.startChat({
+    systemInstruction: CONTENT_CLASSIFIER_PROMPT
+  });
 
-EXTRACTED FACTS:
-${factsText}
+  const result = await chat.sendMessage(
+    `Based on these key points, classify the topic.
+Return JSON with "primary_category" and "secondary_categories" fields.
 
-Format: Category: <category> | Priority: <priority>`;
+Key points: ${JSON.stringify(keyPoints)}`
+  );
 
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
+  try {
+    return JSON.parse(result.response.text());
+  } catch {
+    return { primary_category: "General", secondary_categories: [] };
+  }
 }
 
-/**
- * Step 3: Synthesizes executive bullet points from facts and category context
- */
-async function stepDraftSummary(model, factsText, categoryText) {
-  const prompt = `Using these verified facts and category context, draft a 3-bullet point executive summary brief.
+// Step 3: Generate a summary using key points and classification
+async function generateSummary(model, article, keyPoints, classification) {
+  const chat = model.startChat({
+    systemInstruction: SUMMARIZER_PROMPT
+  });
 
-CATEGORY CONTEXT: ${categoryText}
-VERIFIED FACTS:
-${factsText}
+  const result = await chat.sendMessage(
+    `Generate a concise summary of this article.
+Use these extracted key points and classification to guide your summary.
 
-Draft 3 executive bullet points:`;
+Article: ${article}
+Key Points: ${JSON.stringify(keyPoints)}
+Category: ${classification.primary_category}
 
-  const result = await model.generateContent(prompt);
-  return result.response.text().trim();
+Return only the summary text, under 150 words.`
+  );
+
+  return result.response.text();
 }
 
-/**
- * Full 4-Step Sequential Summarization Pipeline Runner
- */
-export async function runSummarizeChain(model, articleText) {
-  console.log("⚡ [SUMMARIZE CHAIN] Step 1/4: Extracting key facts...");
-  const facts = await stepExtractFacts(model, articleText);
-
-  console.log("⚡ [SUMMARIZE CHAIN] Step 2/4: Classifying category & priority...");
-  const category = await stepClassifyCategory(model, facts);
-
-  console.log("⚡ [SUMMARIZE CHAIN] Step 3/4: Drafting executive summary...");
-  const summary = await stepDraftSummary(model, facts, category);
-
-  console.log("✅ [SUMMARIZE CHAIN] Pipeline complete!");
-
+// Step 4: Format the final output
+function formatOutput(keyPoints, classification, summary) {
   return {
-    pipeline: "4-Step Sequential Summarize Chain",
-    facts,
-    category,
     summary,
-    executedAt: new Date().toISOString()
+    key_points: keyPoints,
+    classification,
+    word_count: summary.split(" ").length,
+    generated_at: new Date().toISOString()
   };
+}
+
+// Run the full 4-step chain
+export async function runSummarizeChain(model, article) {
+  console.log("Step 1: Extracting key points...");
+  const keyPoints = await extractKeyPoints(model, article);
+
+  console.log("Step 2: Classifying topic...");
+  const classification = await classifyTopic(model, keyPoints);
+
+  console.log("Step 3: Generating summary...");
+  const summary = await generateSummary(model, article, keyPoints, classification);
+
+  console.log("Step 4: Formatting output...");
+  const output = formatOutput(keyPoints, classification, summary);
+
+  return output;
 }
 ```
 
@@ -166,8 +172,7 @@ export async function runSummarizeChain(model, articleText) {
 
 ## Key Production Takeaways
 
-1. **Sequential Prompt Chaining Outperforms Monolithic Prompts**: Breaking complex summarization into step-by-step LLM passes increases extraction precision by up to $80\%$ compared to single-prompt execution.
-2. **Log Intermediate Step Outputs for Observability**: Log `facts`, `category`, and `summary` at every step to make pipeline failures easy to diagnose and trace.
-3. **Enable Targeted Step Retries**: If Step 3 fails schema validation, retry only Step 3 rather than restarting the entire pipeline from scratch, saving latency and token costs.
-4. **Decouple Pipeline Logic into Dedicated Files**: Keep chain implementations in `src/chains/summarize-chain.js` to enable reuse across REST API endpoints and CLI utilities.
-
+1. **Modular LLM Passes Improve Quality**: Splitting tasks into `extractKeyPoints`, `classifyTopic`, and `generateSummary` prevents prompt overload and ensures each sub-task benefits from dedicated system instructions.
+2. **Defensive Parsing with Fallbacks**: Always wrap `JSON.parse()` in `try...catch` blocks to handle non-compliant model responses gracefully without crashing the pipeline.
+3. **Context Chaining Across Steps**: Passing extracted `keyPoints` into Step 2 and combining `article`, `keyPoints`, and `primary_category` into Step 3 ensures downstream passes build upon grounded factual data.
+4. **Rich Execution Telemetry**: The final `formatOutput` step adds computed metrics like `word_count` and an ISO `generated_at` timestamp for auditability.

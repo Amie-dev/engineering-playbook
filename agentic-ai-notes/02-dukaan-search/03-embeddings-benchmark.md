@@ -1,175 +1,125 @@
-# Module 03: Embeddings Benchmark Runner & Search Precision Evaluation (`src/embeddings/benchmark.js`)
+# Module 03: Embeddings Benchmark Runner (`src/embeddings/benchmark.js`)
 
 ## Overview
 
-Deploying vector search to production requires empirical validation of search retrieval quality. The **Embeddings Benchmark Runner** evaluates search precision across representative user test queries (*"something to make tea"*, *"warm clothes for winter"*, *"healthy cooking oil"*), calculating **Mean Reciprocal Rank (MRR)** and **Recall@K** precision scores against a product catalog dataset.
+Deploying vector search to e-commerce production requires empirical comparison of distance metrics across real product catalog data. The **Embeddings Benchmark Runner** evaluates search performance across 5 test queries (*"something to make tea"*, *"warm clothes for winter"*, *"gadget for music"*, *"healthy cooking oil"*, *"gift for mom"*), computing **Cosine Similarity**, **Dot Product**, and **Euclidean Similarity** side-by-side.
 
-Understanding **Search Precision Metrics (MRR / Recall@K)**, **Query Latency Profiling**, **Vector Scoring Matrices**, and **Automated Quality Verification** is essential for search engine optimization.
-
----
-
-## 1. Vector Search Benchmark Pipeline Topology
+In **Dukaan Search**, `src/embeddings/benchmark.js` benchmarks product data from `products.json` to demonstrate why Cosine similarity is the optimal metric for text embeddings.
 
 ```mermaid
 flowchart TD
-    TestQueries[Set of Natural Language Queries] --> QueryEmbedder["1. Query Vector Generator<br/>(Generates 768-d Query Vectors q_i)"]
+    Catalog["products.json (Sample 10 Products)"] --> PrepText["productToText(product)"]
+    PrepText --> GenEmbed["generateEmbedding(text)"]
+    GenEmbed --> CatalogEmbeddings["Pre-Calculated Catalog Embeddings Matrix"]
 
-    ProductCatalog[Product Catalog Dataset] --> CatalogEmbedder["2. Pre-Computed Catalog Vectors<br/>(Generates 768-d Vectors v_j)"]
+    Queries["5 Benchmark Test Queries"] --> QueryGen["generateEmbedding(query)"]
 
-    QueryEmbedder --> MatrixEngine["3. Matrix Similarity Engine<br/>(Computes Cosine Sim Matrix: S_ij = Cos(q_i, v_j))"]
-    CatalogEmbedder --> MatrixEngine
+    QueryGen --> ScoreMatrix{"Compute Similarity Matrix Across All 3 Metrics"}
 
-    MatrixEngine --> TopKRanker["4. Top-K Vector Search Ranker<br/>(Sorts products by score descending)"]
+    CatalogEmbeddings --> ScoreMatrix
 
-    TopKRanker --> MetricCalc["5. Precision Metric Calculator<br/>- Mean Reciprocal Rank (MRR)<br/>- Recall@3 / Precision@1<br/>- P99 Query Latency (ms)"]
+    ScoreMatrix --> CosineScore["Cosine Similarity: cos(vecA, vecB)"]
+    ScoreMatrix --> DotScore["Dot Product: dotProduct(vecA, vecB)"]
+    ScoreMatrix --> EucScore["Euclidean Similarity: 1 / (1 + distance)"]
 
-    MetricCalc --> BenchmarkReport[Print Benchmark Quality & Performance Report]
+    CosineScore --> Top3Rank["Sort by Cosine & Display Top 3 Matches"]
+    DotScore --> Top3Rank
+    EucScore --> Top3Rank
 
-    style MatrixEngine fill:#dbeafe,stroke:#1d4ed8
-    style MetricCalc fill:#dcfce7,stroke:#15803d
+    Top3Rank --> MetricInsight["Key Insight Report:<br/>Cosine handles direction; Dot works for unit vectors; Euclidean degrades in high dimensions"]
+
+    style ScoreMatrix fill:#dbeafe,stroke:#1d4ed8
+    style MetricInsight fill:#dcfce7,stroke:#15803d
 ```
 
 ---
 
-## 2. Mean Reciprocal Rank (MRR) Evaluation Formula
+## 1. Multi-Metric Benchmark Comparison
 
-```mermaid
-flowchart TD
-    EvaluationPass[Evaluate Retrieval Accuracy] --> MathFormula["MRR Formula: MRR = (1 / N) * sum(1 / rank_i)"]
-
-    MathFormula --> Example1["Query 1: 'tea maker' -> Target at Rank 1 (Score: 1/1 = 1.0)"]
-    MathFormula --> Example2["Query 2: 'winter jacket' -> Target at Rank 2 (Score: 1/2 = 0.5)"]
-    MathFormula --> Example3["Query 3: 'cooking oil' -> Target at Rank 1 (Score: 1/1 = 1.0)"]
-
-    Example1 --> OverallScore["Overall System MRR = (1.0 + 0.5 + 1.0) / 3 = 0.833 (HIGH PRECISION!)"]
-    Example2 --> OverallScore
-    Example3 --> OverallScore
-
-    style OverallScore fill:#dcfce7,stroke:#15803d
-```
-
-### Search Precision Metric Matrix
-
-| Precision Metric | Mathematical Definition | Target Threshold | Primary What it Measures |
-| :--- | :--- | :--- | :--- |
-| **Precision@1 (P@1)** | $\text{Count}(\text{Rank 1 Target}) / N$ | $> 85\%$ | Percentage of queries where the single top result is perfectly relevant. |
-| **Recall@3 (R@3)** | $\text{Count}(\text{Target in Top 3}) / N$ | $> 95\%$ | Percentage of queries where the relevant item appears in top 3 results. |
-| **Mean Reciprocal Rank (MRR)** | $\frac{1}{|Q|} \sum_{i=1}^{|Q|} \frac{1}{\text{rank}_i}$ | $> 0.80$ | Overall rank position decay quality of retrieved search items. |
-| **P99 Latency** | 99th Percentile Execution Time | $< 25\text{ms}$ | Latency ceiling under search load. |
+| Metric Evaluated | Formula / Function | Range | Magnitude Behavior | Accuracy on High-Dim Text |
+| :--- | :--- | :--- | :--- | :--- |
+| **Cosine Similarity** | `cosineSimilarity(q, p)` | $[-1.0, +1.0]$ | **Magnitude Invariant** (Focuses purely on direction & semantic meaning) | **Optimal (Best for Text)** |
+| **Dot Product** | `dotProduct(q, p)` | Unbounded | Sensitive to vector magnitude unless pre-normalized | Fast & Accurate for Normalized Vectors |
+| **Euclidean Similarity** | `euclideanSimilarity(q, p)` | $(0.0, 1.0]$ | Sensitive to distance; suffers from curse of dimensionality | Can be misleading in 768-d space |
 
 ---
 
-## 3. Benchmark Execution Sequence
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Runner as Benchmark Runner
-    participant Generator as Embedding Generator
-    participant Sim as Similarity Engine
-    participant Reporter as Report Generator
-
-    Runner->>Generator: Pre-calculate embeddings for 100 products
-    Generator-->>Runner: Return Product Embedding Matrix
-
-    loop For Each Benchmark Query
-        Runner->>Generator: Generate Query Vector
-        Generator-->>Runner: Return Query Vector
-        Runner->>Sim: Compute Cosine Sim against all 100 products
-        Sim-->>Runner: Return Scored Product List
-        Runner->>Runner: Rank products & calculate MRR / Latency
-    end
-
-    Runner->>Reporter: Log Final Benchmark Metrics (MRR, P99 Latency)
-```
-
----
-
-## 4. Code Walkthrough (`src/embeddings/benchmark.js`)
+## 2. Complete Source Code Walkthrough (`src/embeddings/benchmark.js`)
 
 ```javascript
-import { getEmbedding } from "./generate.js";
-import { cosineSimilarity } from "./similarity.js";
-import products from "../data/products.json" assert { type: "json" };
+// Benchmark: compare similarity metrics on the same product data
 
-/**
- * Benchmark Test Queries with Expected Target Category Keywords
- */
-const BENCHMARK_SUITE = [
-  { query: "something to keep tea hot on commutes", targetKeyword: "Flask" },
-  { query: "warm winter clothing for outdoor snow", targetKeyword: "Jacket" },
-  { query: "healthy organic cooking oil for frying", targetKeyword: "Oil" }
-];
+import { generateEmbedding, productToText } from "./generate.js";
+import { cosineSimilarity, dotProduct, euclideanSimilarity } from "./similarity.js";
+import products from "../data/products.json" with { type: "json" };
 
-/**
- * Executes Vector Search Retrieval Benchmark Suite
- */
-export async function runBenchmark() {
-  console.log("⚡ [BENCHMARK RUNNER] Starting E-Commerce Vector Search Precision Evaluation...");
-  const startTime = Date.now();
+async function runBenchmark() {
+  console.log("Generating embeddings for all products...\n");
 
-  // Step 1: Pre-calculate product embeddings for catalog
-  console.log(`📦 [BENCHMARK] Indexing ${products.length} catalog product items...`);
-  const catalogEmbeddings = await Promise.all(
-    products.map((p) => getEmbedding(`${p.name}: ${p.description}`))
-  );
+  // Embed a subset for quick benchmarking
+  const sampleProducts = products.slice(0, 10);
+  const embeddings = [];
 
-  let totalReciprocalRank = 0;
-  let precisionAt1Count = 0;
-  const latencies = [];
-
-  // Step 2: Evaluate query suite
-  for (const testCase of BENCHMARK_SUITE) {
-    const qStart = Date.now();
-    const queryVec = await getEmbedding(testCase.query);
-
-    // Compute similarity scores across catalog
-    const scoredProducts = products.map((prod, idx) => ({
-      product: prod,
-      score: cosineSimilarity(queryVec, catalogEmbeddings[idx])
-    }));
-
-    // Rank descending by score
-    scoredProducts.sort((a, b) => b.score - a.score);
-    const qDuration = Date.now() - qStart;
-    latencies.push(qDuration);
-
-    // Find rank of first matching product containing target keyword
-    const targetRank = scoredProducts.findIndex((item) =>
-      item.product.name.toLowerCase().includes(testCase.targetKeyword.toLowerCase())
-    ) + 1;
-
-    const reciprocalRank = targetRank > 0 ? 1 / targetRank : 0;
-    totalReciprocalRank += reciprocalRank;
-    if (targetRank === 1) precisionAt1Count++;
-
-    console.log(`\n🔍 Query: "${testCase.query}"`);
-    console.log(`   Top 1 Result: ${scoredProducts[0].product.name} (Score: ${scoredProducts[0].score.toFixed(4)})`);
-    console.log(`   Target Rank: #${targetRank} | Reciprocal Rank: ${reciprocalRank.toFixed(3)} | Latency: ${qDuration}ms`);
+  for (const product of sampleProducts) {
+    const text = productToText(product);
+    const embedding = await generateEmbedding(text);
+    embeddings.push({ product, embedding });
+    console.log(`Embedded: ${product.name}`);
   }
 
-  const mrr = totalReciprocalRank / BENCHMARK_SUITE.length;
-  const pAt1 = (precisionAt1Count / BENCHMARK_SUITE.length) * 100;
-  const totalDuration = Date.now() - startTime;
+  // Test queries
+  const queries = [
+    "something to make tea",
+    "warm clothes for winter",
+    "gadget for music",
+    "healthy cooking oil",
+    "gift for mom"
+  ];
 
-  console.log("\n=========================================");
-  console.log("📊 FINAL BENCHMARK PERFORMANCE REPORT");
-  console.log("=========================================");
-  console.log(`- Total Execution Time : ${totalDuration}ms`);
-  console.log(`- Precision@1          : ${pAt1.toFixed(1)}%`);
-  console.log(`- Mean Reciprocal Rank : ${mrr.toFixed(3)} (Target: > 0.80)`);
-  console.log("=========================================\n");
+  console.log("\n--- Benchmark Results ---\n");
 
-  return { mrr, precisionAt1: pAt1, totalDurationMs: totalDuration };
+  for (const query of queries) {
+    console.log(`Query: "${query}"`);
+    console.log("-".repeat(60));
+
+    const queryEmbedding = await generateEmbedding(query);
+
+    // Score with all three metrics
+    const results = embeddings.map(item => ({
+      name: item.product.name,
+      cosine: cosineSimilarity(queryEmbedding, item.embedding),
+      dot: dotProduct(queryEmbedding, item.embedding),
+      euclidean: euclideanSimilarity(queryEmbedding, item.embedding)
+    }));
+
+    // Sort by cosine and show top 3
+    results.sort((a, b) => b.cosine - a.cosine);
+    const top3 = results.slice(0, 3);
+
+    for (const r of top3) {
+      console.log(`  ${r.name}`);
+      console.log(`    Cosine: ${r.cosine.toFixed(4)}  |  Dot: ${r.dot.toFixed(4)}  |  Euclidean: ${r.euclidean.toFixed(4)}`);
+    }
+
+    console.log();
+  }
+
+  // Show which metric agrees most often
+  console.log("--- Key Insight ---");
+  console.log("Cosine similarity is generally best for text embeddings because");
+  console.log("it ignores vector magnitude and focuses on direction (meaning).");
+  console.log("Dot product works well when vectors are already normalized.");
+  console.log("Euclidean distance can be misleading with high-dimensional vectors.");
 }
+
+runBenchmark().catch(console.error);
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Automate Benchmark Evaluations in CI/CD**: Run search benchmark scripts before merging embedding model changes to prevent precision regressions.
-2. **Track Mean Reciprocal Rank (MRR)**: Use MRR ($0.0 - 1.0$) as the primary metric for evaluating retrieval rank quality.
-3. **Pre-Compute Catalog Embeddings**: In production benchmarks, pre-compute product catalog embeddings to isolate vector search similarity latency from embedding API network time.
-4. **Evaluate Natural Language Conceptual Queries**: Ensure benchmark test cases use conversational descriptions (*"something to keep chai hot"*) rather than exact product titles to rigorously test semantic search capabilities.
-
+1. **Cosine Similarity Focuses on Semantic Direction**: Text embeddings encode semantic concept direction rather than magnitude. Cosine similarity isolates directional alignment.
+2. **Dot Product Optimization for Unit Vectors**: When vectors are pre-normalized, Dot product scores equal Cosine similarity values while running faster due to fewer arithmetic operations.
+3. **Curse of Dimensionality in Euclidean Space**: In high-dimensional vector spaces (768 dimensions), straight-line Euclidean distance can cluster un-intuitively due to distance concentration phenomena.
+4. **Benchmarking with Natural Language Queries**: Testing conversational queries (*"something to make tea"*) verifies that the vector space captures semantic intent beyond simple keyword matching.

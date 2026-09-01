@@ -1,200 +1,279 @@
-# Module 04: Advanced Reasoning Techniques — CoT, Self-Consistency, and Tree-of-Thoughts
+# Module 04: Advanced Prompt Engineering — Chain-of-Thought, Self-Consistency, Tree-of-Thought, & ReAct
 
-## Overview
+## Theoretical Overview & Advanced Reasoning Paradigms
 
-Complex mathematical deduction, logic puzzles, multi-step software design, and root-cause analysis often exceed the single-pass reasoning capabilities of standard zero-shot prompts. **Advanced Reasoning Paradigms**—such as **Chain-of-Thought (CoT)**, **Self-Consistency Majority Voting**, and **Tree-of-Thoughts (ToT)**—allocate additional output token budget to explicitly unpack intermediate reasoning steps before declaring a final answer.
+Basic zero-shot prompting hits a capability ceiling on multi-step reasoning, mathematical calculations, logic puzzles, and complex tool orchestration. Advanced prompt engineering techniques structure the LLM's computation by forcing intermediate reasoning steps before arriving at a final answer.
 
-Understanding **Zero-Shot vs. Few-Shot CoT**, **Self-Consistency Sampling Economics**, and **Tree-of-Thoughts State-Space Search (BFS/DFS)** is essential for high-accuracy agentic architectures.
-
----
-
-## 1. Comparative Reasoning Paradigms Topology
+By leveraging **Chain-of-Thought (CoT)**, **Self-Consistency (Majority Voting)**, **Tree-of-Thought (ToT Branching)**, **ReAct (Reason + Act)**, and **Templated Variable Injection**, developers can boost model reasoning accuracy from $\sim 50\%$ to over $90\%+$ without fine-tuning weights.
 
 ```mermaid
 flowchart TD
-    Task[Complex Reasoning Task Input] --> Paradigm{Reasoning Paradigm Selection}
-
-    Paradigm -- "1. Standard Direct Completion" --> Direct["Direct Input -> Output (No CoT)<br/>- High failure rate on complex math & multi-step logic"]
-
-    Paradigm -- "2. Chain-of-Thought (CoT)" --> SingleCoT["Step-by-Step Chain-of-Thought<br/>- Forces LLM to output intermediate reasoning steps<br/>- Unlocks hidden reasoning capacity in Transformer layers"]
-
-    Paradigm -- "3. Self-Consistency (Majority Vote)" --> ParallelCoT["Parallel Multi-Path Self-Consistency<br/>- Generates N parallel CoT paths (T=0.7)<br/>- Resolves final answer via Majority Vote"]
-
-    Paradigm -- "4. Tree-of-Thoughts (ToT)" --> TreeSearch["Tree-of-Thoughts Search Engine<br/>- Branching thought space with BFS / DFS exploration<br/>- Evaluates and backtracks dead-end reasoning nodes"]
-
-    style SingleCoT fill:#dbeafe,stroke:#1d4ed8
-    style ParallelCoT fill:#dcfce7,stroke:#15803d
-    style TreeSearch fill:#fef3c7,stroke:#b45309
-```
-
----
-
-## 2. Tree-of-Thoughts (ToT) State-Space Search Mechanics
-
-Unlike linear Chain-of-Thought, **Tree-of-Thoughts** models problem solving as a search over a directed graph of "Thought Nodes", evaluating candidates via heuristic scoring:
-
-```mermaid
-flowchart TD
-    Root[Root Problem Node: Task Specification] --> T1["Thought Branch A: Initial Hypothesis"]
-    Root --> T2["Thought Branch B: Alternative Hypothesis"]
-    Root --> T3["Thought Branch C: Edge-Case Hypothesis"]
-
-    T1 --> Eval1{Evaluate Node A Score}
-    T2 --> Eval2{Evaluate Node B Score}
-    T3 --> Eval3{Evaluate Node C Score}
-
-    Eval1 -- "Score = 0.9 (Promising)" --> A1["Expand Node A -> Step 2 Sub-thoughts"]
-    Eval2 -- "Score = 0.2 (Dead End)" --> Prune2["Prune Branch B (Backtrack)"]
-    Eval3 -- "Score = 0.8 (Promising)" --> C1["Expand Node C -> Step 2 Sub-thoughts"]
-
-    A1 --> FinalSolution["Target Verified Solution Node (100% Accuracy)"]
-
-    style A1 fill:#dcfce7,stroke:#15803d
-    style Prune2 fill:#fee2e2,stroke:#dc2626
-```
-
-### Advanced Reasoning Strategy Comparison Matrix
-
-| Reasoning Strategy | Inference Token Cost | Execution Model | Accuracy Boost on Hard Tasks | Primary Best Use Case |
-| :--- | :--- | :--- | :--- | :--- |
-| **Standard Direct** | $1\times$ | Single Completion Call | Baseline ($30\% - 50\%$) | Simple classification, summaries, basic Q&A. |
-| **Chain-of-Thought (CoT)** | $2\times - 3\times$ | Single Sequence ("Think step by step") | Moderate ($70\% - 85\%$) | Multi-step calculations, code debugging, logical deduction. |
-| **Self-Consistency** | $5\times - 10\times$ | Parallel $N$ Samples + Majority Voting | High ($90\% - 95\%$) | Math benchmark competitions, legal contract analysis. |
-| **Tree-of-Thoughts (ToT)** | $10\times - 30\times$ | Multi-Turn BFS/DFS Search with Evaluator | Maximum ($95\%+$) | Complex strategic planning, game theory, architecture design. |
-
----
-
-## 3. Self-Consistency Execution & Voting Pipeline
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Pipeline as Agent Controller
-    participant LLM as Target LLM API
-    participant Resolver as Majority Vote Resolver
-
-    Pipeline->>LLM: Dispatch 5 Parallel CoT Prompts (Temperature = 0.7)
+    Task[Complex Input Task / Question] --> Technique{"Select Reasoning Paradigm"}
     
-    par Path 1
-        LLM-->>Resolver: "Path 1 CoT ... FINAL ANSWER: 42"
-    and Path 2
-        LLM-->>Resolver: "Path 2 CoT ... FINAL ANSWER: 42"
-    and Path 3
-        LLM-->>Resolver: "Path 3 CoT ... FINAL ANSWER: 38 (Calculation Error)"
-    and Path 4
-        LLM-->>Resolver: "Path 4 CoT ... FINAL ANSWER: 42"
-    and Path 5
-        LLM-->>Resolver: "Path 5 CoT ... FINAL ANSWER: 42"
-    end
-
-    Resolver->>Resolver: Calculate Vote Frequencies (42: 4 votes, 38: 1 vote)
-    Resolver-->>Pipeline: Selected Output: 42 (Confidence: 80% Consensus)
+    Technique -->|Multi-Step Logic / Math| CoT["1. Chain-of-Thought (CoT)<br/>'Let's think step by step'"]
+    Technique -->|High-Stakes Accuracy| SelfConst["2. Self-Consistency<br/>Sample N CoT paths at Temp=0.7 -> Majority Vote"]
+    Technique -->|Branching / Puzzles / Planning| ToT["3. Tree-of-Thought (ToT)<br/>Explore & Evaluate State Trees -> Prune Bad Paths"]
+    Technique -->|Autonomous Agent / Tool Usage| ReAct["4. ReAct Pattern<br/>Thought -> Action -> Observation Loop"]
+    
+    CoT --> TemplateEngine["Wrap in Production PromptTemplate<br/>(Variable Injection & Token Budget Estimation)"]
+    SelfConst --> TemplateEngine
+    ToT --> TemplateEngine
+    ReAct --> TemplateEngine
+    
+    TemplateEngine --> Execution["API Execution & Response Parsing"]
 ```
+
+### Real-World Analogy: IAS Toppers Rough Work Sheets
+Think of an IAS exam topper solving complex policy questions:
+- **Standard Prompt**: Writing down only the final answer without working. If the mental calculation makes a tiny arithmetic slip early on, the entire answer fails.
+- **Chain-of-Thought (CoT)**: Showing explicit rough work step-by-step on the margin ("Step 1: Calculate total budget, Step 2: Subtract administrative overhead...").
+- **Self-Consistency**: Asking 5 different IAS toppers to solve the same problem independently and accepting the consensus majority answer.
+- **Tree-of-Thought (ToT)**: Evaluating multiple candidate policy solutions, drawing decision trees, and discarding non-viable options before writing the final recommendation.
+- **ReAct**: Alternating between analyzing the situation (Thought), fetching data from ministry reports (Action), reading the figures (Observation), and deciding the next step.
 
 ---
 
-## 4. Practical Implementation Showcase: Self-Consistency Majority Voting Engine
+## 1. Chain-of-Thought (CoT) Prompting (`Section 1`)
+
+CoT forces the LLM to generate intermediate reasoning tokens prior to the final answer token. This unlocks significant reasoning improvements.
 
 ```javascript
-class SelfConsistencyEngine {
-  constructor(llmClient, options = {}) {
-    this.client = llmClient;
-    this.sampleCount = options.sampleCount || 5;
-    this.temperature = options.temperature || 0.7;
+// Standard Prompt vs Chain-of-Thought Prompt Comparison
+const standardPrompt = `Q: A shop sells mangoes at ₹40 each. Rahul buys 5 mangoes and gets a 10% discount. He pays with a ₹500 note. How much change does he get?
+A:`;
+
+const cotPrompt = `Q: A shop sells mangoes at ₹40 each. Rahul buys 5 mangoes and gets a 10% discount. He pays with a ₹500 note. How much change does he get?
+
+Let's solve this step by step:
+Step 1: Calculate total before discount (5 * 40 = 200)
+Step 2: Calculate discount amount (10% of 200 = 20)
+Step 3: Calculate final price (200 - 20 = 180)
+Step 4: Calculate change (500 - 180 = 320)
+
+A: Rahul receives ₹320 change.`;
+
+// Zero-Shot CoT: The "Magic Phrase"
+const zeroShotCoT = `Q: If a train travels at 60 km/h and needs to cover 240 km, but stops for 30 minutes halfway, what's the total journey time?
+
+Let's think step by step.
+
+A:`;
+
+// Programmatic Guided CoT Prompt Builder
+function buildCoTPrompt(question, steps = null) {
+  let prompt = `Question: ${question}\n\n`;
+  if (steps) {
+    prompt += "Think through this systematically:\n";
+    steps.forEach((s, i) => { prompt += `Step ${i + 1}: ${s}\n`; });
+    prompt += "\nAnswer:";
+  } else {
+    prompt += "Let's think step by step.\n\nAnswer:";
   }
+  return prompt;
+}
+```
 
-  /**
-   * Parses reasoning output string and extracts answer tag payload
-   */
-  extractAnswerTag(completionText) {
-    // Look for explicit tags like FINAL ANSWER: <val> or <answer><val></answer>
-    const xmlMatch = completionText.match(/<answer>([\s\S]*?)<\/answer>/i);
-    if (xmlMatch) return xmlMatch[1].trim();
+---
 
-    const lineMatch = completionText.match(/FINAL ANSWER:\s*(.+)$/im);
-    if (lineMatch) return lineMatch[1].trim();
+## 2. Self-Consistency: Sampling Multiple Paths & Majority Voting (`Section 2`)
 
-    // Fallback: Use last line of response
-    const lines = completionText.trim().split("\n");
-    return lines[lines.length - 1].trim();
-  }
+Single reasoning paths can encounter unexpected logical drifts. **Self-Consistency** samples $N$ independent reasoning paths (with $T=0.7$) and selects the statistical majority answer.
 
-  /**
-   * Executes parallel CoT samplings and calculates weighted majority consensus
-   */
-  async resolveTask(promptText) {
-    const cotPrompt = `${promptText}\n\nLet's think step by step to solve this problem. Delineate your final answer clearly inside <answer>YOUR_ANSWER</answer> tags.`;
+```javascript
+// Majority Voting Algorithm across N Reasoning Paths
+function selfConsistencyVote(answers) {
+  const counts = {};
+  answers.forEach(a => {
+    const normalized = a.toString().trim().toLowerCase();
+    counts[normalized] = (counts[normalized] || 0) + 1;
+  });
 
-    // Simulate parallel asynchronous LLM API calls
-    const parallelCalls = Array.from({ length: this.sampleCount }, () =>
-      this.client.generateCompletion(cotPrompt, { temperature: this.temperature })
-    );
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const total = answers.length;
 
-    const responses = await Promise.all(parallelCalls);
+  return {
+    winner: sorted[0][0],
+    confidence: (sorted[0][1] / total * 100).toFixed(0) + "%",
+    distribution: sorted.map(([ans, count]) => ({
+      answer: ans,
+      votes: count,
+      pct: (count / total * 100).toFixed(0) + "%",
+    })),
+  };
+}
 
-    // Vote Frequency Aggregator
-    const voteMap = new Map();
+// 5 Parallel Reasoning Paths for "17 * 24"
+const simulatedPaths = [
+  { reasoning: "17*20=340, 17*4=68, total=408", answer: 408 },
+  { reasoning: "17*24=17*25-17=425-17=408", answer: 408 },
+  { reasoning: "20*24=480, -3*24=-72, 480-72=408", answer: 408 },
+  { reasoning: "17*24=17*2*12=34*12=408", answer: 408 },
+  { reasoning: "17*24=17*12*2=204*2=408", answer: 408 },
+];
 
-    responses.forEach((response, idx) => {
-      const extractedAnswer = this.extractAnswerTag(response);
-      if (!voteMap.has(extractedAnswer)) {
-        voteMap.set(extractedAnswer, { count: 0, exemplarReasoning: response });
-      }
-      voteMap.get(extractedAnswer).count += 1;
-    });
+const voteResult = selfConsistencyVote(simulatedPaths.map(p => p.answer));
+// Output: winner = 408, confidence = "100%"
+```
 
-    // Find Majority Winner
-    let winnerAnswer = null;
-    let maxVotes = -1;
-    let winningReasoning = "";
+---
 
-    for (const [answer, record] of voteMap.entries()) {
-      if (record.count > maxVotes) {
-        maxVotes = record.count;
-        winnerAnswer = answer;
-        winningReasoning = record.exemplarReasoning;
+## 3. Tree-of-Thought (ToT) Framework (`Section 3`)
+
+Tree-of-Thought allows the LLM to explore multiple solution branches, evaluate state quality, and backtrack when encountering non-promising paths.
+
+```mermaid
+flowchart TD
+    Root["Root State: [8L, 0L, 0L]"] --> Move1A["Pour 8L -> 5L: [3L, 5L, 0L]"]
+    Root --> Move1B["Pour 8L -> 3L: [5L, 0L, 3L]"]
+    
+    Move1A --> Move2A["Pour 5L -> 3L: [3L, 2L, 3L] (Promising!)"]
+    Move1A --> Move2B["Pour 3L -> 8L (Dead End - Backtrack)"]
+    
+    Move2A --> TargetState["Target State Reached: [4L, 4L, 0L]"]
+    
+    style TargetState fill:#dcfce7,stroke:#15803d
+    style Move2B fill:#fee2e2,stroke:#dc2626
+```
+
+```javascript
+// Tree-of-Thought Water Jug Problem Solver (8L, 5L, 3L to get 4L)
+function totWaterJug() {
+  const target = 4;
+  const capacities = [8, 5, 3];
+  const initial = [8, 0, 0];
+  const visited = new Set();
+  const queue = [[initial, []]];
+
+  while (queue.length > 0) {
+    const [state, path] = queue.shift();
+    const key = state.join(",");
+    if (visited.has(key)) continue;
+    visited.add(key);
+
+    if (state[0] === target) return { solution: state, path: [...path, state] };
+
+    // Explore tree branches (all valid pours)
+    for (let from = 0; from < 3; from++) {
+      for (let to = 0; to < 3; to++) {
+        if (from === to || state[from] === 0) continue;
+        const pour = Math.min(state[from], capacities[to] - state[to]);
+        if (pour === 0) continue;
+        const newState = [...state];
+        newState[from] -= pour;
+        newState[to] += pour;
+        queue.push([newState, [...path, state]]);
       }
     }
+  }
+  return null;
+}
+```
 
-    const consensusScore = (maxVotes / this.sampleCount) * 100;
+---
 
-    return {
-      finalAnswer: winnerAnswer,
-      consensusConfidence: `${consensusScore.toFixed(1)}% (${maxVotes}/${this.sampleCount} votes)`,
-      reasoningTrace: winningReasoning,
-      voteDistribution: Object.fromEntries(
-        Array.from(voteMap.entries()).map(([k, v]) => [k, v.count])
-      )
-    };
+## 4. ReAct Pattern: Reason + Act Loop (`Section 4`)
+
+The **ReAct (Reason + Act)** pattern alternates between explicit reasoning steps (`Thought`), execution commands (`Action`), and returning external tool outputs (`Observation`).
+
+```javascript
+const reactPromptFormat = `You are an assistant that can use tools. Follow this exact format:
+
+Thought: [reasoning about what to do next]
+Action: [tool_name(parameters)]
+Observation: [result returned by tool]
+... (repeat Thought/Action/Observation)
+Final Answer: [conclusion]
+
+Available tools:
+- search(query): Search web
+- calculator(expression): Math evaluation
+
+Question: What is the population density of Uttar Pradesh?
+
+Thought: I need UP's population first.
+Action: search("Uttar Pradesh population")
+Observation: 240,000,000 people
+
+Thought: Now I need UP's land area.
+Action: search("Uttar Pradesh area sq km")
+Observation: 243,286 sq km
+
+Thought: Calculate density = population / area.
+Action: calculator(240000000 / 243286)
+Observation: 986.5
+
+Final Answer: The population density of Uttar Pradesh is approximately 987 people per sq km.`;
+
+// Programmatic ReAct Execution Loop Simulator
+function simulateReActLoop(question, tools, maxSteps = 5) {
+  const trace = [];
+  let currentQuestion = question;
+
+  for (let step = 0; step < maxSteps; step++) {
+    const thought = `[Step ${step + 1}] Analyzing: ${currentQuestion}`;
+    const action = tools[step % tools.length];
+    const observation = `Result from ${action.name}: ${action.mockResult}`;
+
+    trace.push({ step: step + 1, thought, action: action.name, observation });
+    if (action.isFinal) break;
+    currentQuestion = observation;
+  }
+  return trace;
+}
+```
+
+---
+
+## 5. Prompt Templates & Variable Injection (`Section 5`)
+
+Hard-coding prompts does not scale in production. `PromptTemplate` handles variable injection, template composition, and token estimation:
+
+```javascript
+class PromptTemplate {
+  constructor(template, requiredVars = []) {
+    this.template = template;
+    this.requiredVars = requiredVars;
+  }
+
+  format(variables) {
+    const missing = this.requiredVars.filter(v => !(v in variables));
+    if (missing.length > 0) {
+      throw new Error(`Missing template variables: ${missing.join(", ")}`);
+    }
+
+    let result = this.template;
+    for (const [key, value] of Object.entries(variables)) {
+      const placeholder = `{{${key}}}`;
+      while (result.includes(placeholder)) {
+        result = result.replace(placeholder, String(value));
+      }
+    }
+    return result;
+  }
+
+  estimateTokens(variables) {
+    const formatted = this.format(variables);
+    return Math.ceil(formatted.length / 4);
   }
 }
 
-// Mock LLM Client Simulator
-const mockLLMClient = {
-  generateCompletion: async (prompt, opts) => {
-    const mockOutcomes = [
-      "Step 1: Calculate total RAM (64GB). Step 2: Subtract OS overhead (4GB). Step 3: Divide remaining 60GB by 2GB per worker = 30 workers. <answer>30 workers</answer>",
-      "Step 1: Total RAM is 64GB. OS uses 4GB leaving 60GB. 60GB / 2GB = 30. <answer>30 workers</answer>",
-      "Step 1: 64GB RAM / 2GB = 32 workers. (Forgot OS overhead). <answer>32 workers</answer>",
-      "Step 1: Overhead 4GB subtracted from 64GB = 60GB. Each worker 2GB -> 30 workers. <answer>30 workers</answer>",
-      "Step 1: 64GB - 4GB = 60GB. 60 / 2 = 30. <answer>30 workers</answer>"
-    ];
-    return mockOutcomes[Math.floor(Math.random() * mockOutcomes.length)];
-  }
-};
+// Enterprise Support Prompt Template
+const supportTemplate = new PromptTemplate(
+  `You are a {{role}} for {{company}}.
+Customer name: {{customer_name}} (Language: {{language}})
+Issue: {{issue}}
 
-// Execution Test
-const engine = new SelfConsistencyEngine(mockLLMClient, { sampleCount: 5, temperature: 0.7 });
-engine.resolveTask("How many 2GB worker processes can run on a 64GB RAM server if OS reserves 4GB?")
-  .then((res) => console.log("Self-Consistency Consensus Report:\n", JSON.stringify(res, null, 2)));
+Respond in {{language}}. Keep response under {{max_words}} words.`,
+  ["role", "company", "customer_name", "language", "issue"]
+);
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Use "Think Step-by-Step" Trigger Phrases**: Simply adding `"Let's think step by step"` (Zero-Shot CoT) forces the LLM to output reasoning tokens before generating conclusions, drastically boosting accuracy on logic tasks.
-2. **Apply Self-Consistency to High-Stakes Operations**: For critical financial, medical, or legal tasks, run $5 - 10$ parallel CoT generations with temperature $0.7$ and select the majority vote to eliminate individual hallucination errors.
-3. **Use Tree-of-Thoughts for Combinatorial Planning**: When solving complex search space problems (e.g. scheduling, refactoring multi-file codebases), use ToT to systematically evaluate and backtrack candidate branches.
-4. **Standardize Answer Extractors via Delimiters**: Enforce XML tags (e.g., `<answer>42</answer>`) in CoT prompts to allow automated Regex scripts to parse and count answers reliably.
-
+1. **Zero-Shot CoT "Magic Phrase"**: Simply appending `"Let's think step by step"` to prompts increases accuracy by $20\% - 40\%$ on complex math and logic tasks.
+2. **Self-Consistency for Mission-Critical Logic**: Run $N=5$ parallel CoT paths at $T=0.7$ and take a majority vote to eliminate accidental reasoning errors.
+3. **Tree-of-Thought for Branching Problems**: Use ToT when problems require exploring multiple state paths (e.g. water jug puzzles, route planning, code generation).
+4. **ReAct is the Agent Foundation**: All modern AI agents use the ReAct loop (`Thought -> Action -> Observation`) to decide which tools to call dynamically.
+5. **Templated Variable Injection**: Wrap all production prompts in `PromptTemplate` classes to enforce required parameters, prevent missing inputs, and estimate token overhead.

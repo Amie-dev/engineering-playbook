@@ -1,208 +1,240 @@
-# Module 05: Prompt Chaining, Workflow Composition, and Pipeline Orchestration
+# Module 05: Prompt Chaining & Pipeline Orchestration Architecture
 
-## Overview
+## Theoretical Overview & Pipeline Orchestration
 
-Attempting to solve complex multi-stage tasks (such as document auditing, codebase migration, or financial report synthesis) in a single massive prompt often results in degraded quality, missed constraints, and context window bloat. **Prompt Chaining** decomposes monolithic tasks into a directed sequence of focused, modular LLM execution steps, passing transformed context payloads from Step $N$ into Step $N+1$.
+Single-prompt LLM interactions fail on complex multi-stage tasks. **Prompt Chaining** decomposes a complex objective into modular, sequential, parallel, or conditional sub-prompts. Each step in a chain executes a focused task, validates its output, and passes structured data downstream.
 
-Understanding **Sequential Chains**, **Parallel Fan-Out / Fan-In Aggregation**, **Conditional Dynamic Routing**, and **Intermediate Step Validation Guards** is essential for scalable AI engineering.
-
----
-
-## 1. Prompt Chaining Topology & Workflow Taxonomies
+By organizing workflows into **Sequential Chains**, **Parallel Fan-Out/Fan-In Chains**, **Conditional Branching Routers**, and **Map-Reduce Pipelines**, developers create reliable, debuggable, and scalable agentic systems.
 
 ```mermaid
 flowchart TD
-    subgraph 1. Sequential Pipeline Chain
-        S1[Step 1: Document Entity Extraction] --> S2[Step 2: Fact Verification & Grounding]
-        S2 --> S3[Step 3: Executive Summary Formatting]
+    RawInput[Raw User Input / Ticket] --> RouterStep{"Chain Orchestrator"}
+    
+    subgraph Sequential 4-Step Pipeline
+        RouterStep --> Step1["Step 1: Extract Engine<br/>Parse JSON entities: customer, issue, urgency"]
+        Step1 --> Step2["Step 2: Classify & Route<br/>Determine department, priority, and SLA"]
+        Step2 --> Step3["Step 3: Draft Response<br/>Generate empathetic, contextual email"]
+        Step3 --> Step4["Step 4: Format Ticket JSON<br/>Construct final API payload with SLA metadata"]
     end
-
-    subgraph 2. Parallel Fan-Out / Fan-In Chain
-        PInput[Task Input Payload] --> PBranch1[Branch A: Legal Risk Audit]
-        PInput --> PBranch2[Branch B: Financial Audit]
-        PInput --> PBranch3[Branch C: Technical Compliance Audit]
+    
+    subgraph Parallel Fan-Out / Fan-In Subsystem
+        RouterStep --> BranchA["Branch A: Financial Analysis"]
+        RouterStep --> BranchB["Branch B: Sentiment Analysis"]
+        RouterStep --> BranchC["Branch C: Risk Assessment"]
         
-        PBranch1 --> FanInAggregator[Fan-In Synthesizer Node]
-        PBranch2 --> FanInAggregator
-        PBranch3 --> FanInAggregator
+        BranchA --> MergeNode["Fan-In Merge Strategy (Promise.allSettled)"]
+        BranchB --> MergeNode
+        BranchC --> MergeNode
     end
-
-    subgraph 3. Conditional Dynamic Routing Chain
-        RouterInput[Incoming Input] --> Classifier{LLM Intent Router Node}
-        Classifier -- "Intent: Support Ticket" --> RouteSupport[Support Automation Sub-Chain]
-        Classifier -- "Intent: Sales Lead" --> RouteSales[Sales Qualification Sub-Chain]
-    end
-
-    style S3 fill:#dcfce7,stroke:#15803d
-    style FanInAggregator fill:#dbeafe,stroke:#1d4ed8
-    style Classifier fill:#fef3c7,stroke:#b45309
+    
+    Step4 --> FinalOutput[Final Standardized JSON Ticket Output]
+    MergeNode --> FinalOutput
 ```
+
+### Real-World Analogy: Mumbai Dabba Supply Chain
+Think of the famous Mumbai Dabbawala supply chain:
+- **Step 1 (Nashik Farmers / Source)**: Harvest fresh vegetables from Nashik fields (extracting raw input data).
+- **Step 2 (Crawford Market Sorting)**: Sort produce into specific delivery crates at the central market (classifying and routing by department).
+- **Step 3 (Dabbawala Assembly)**: Assemble individual tiffin boxes into master wooden crates mapped to train lines (drafting and composing structured content).
+- **Step 4 (Final Desk Delivery)**: Deliver the exact tiffin to the corporate desk at Churchgate station (formatting final validated output payload). If any single link breaks, the entire lunch delivery fails.
 
 ---
 
-## 2. Parallel Fan-Out / Fan-In Latency & Cost Optimization
+## 1. Prompt Chaining Core Patterns Matrix (`Section 1`)
 
-Parallel fan-out execution reduces total end-to-end pipeline latency from $O(N_1 + N_2 + N_3)$ down to $O(\max(N_1, N_2, N_3)) + \text{Synthesis}$:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Orchestrator as Workflow Engine
-    participant LLM_A as LLM Agent A (Legal)
-    participant LLM_B as LLM Agent B (Financial)
-    participant LLM_C as LLM Agent C (Security)
-    participant LLM_Synth as Synthesizer Agent
-
-    Orchestrator->>LLM_A: Dispatch Legal Review Task (Async)
-    Orchestrator->>LLM_B: Dispatch Financial Review Task (Async)
-    Orchestrator->>LLM_C: Dispatch Security Audit Task (Async)
-
-    par Parallel Async Execution
-        LLM_A-->>Orchestrator: Returns Legal Report (1.2s)
-    and
-        LLM_B-->>Orchestrator: Returns Financial Report (1.5s)
-    and
-        LLM_C-->>Orchestrator: Returns Security Report (0.9s)
-    end
-
-    note over Orchestrator: All 3 sub-reports received in 1.5s max wall-clock time!
-    Orchestrator->>LLM_Synth: Synthesize Final Combined Audit Executive Report
-    LLM_Synth-->>Orchestrator: Returns Unified Final Report (0.8s)
-```
-
-### Chaining Architectural Patterns Comparison
-
-| Pattern Type | Latency Characteristics | Cost Model | Primary Use Case |
+| Chaining Pattern | Execution Flow | Primary Technical Benefit | Example Production Use Case |
 | :--- | :--- | :--- | :--- |
-| **Sequential Chain** | Linear additive latency ($T_1 + T_2 + T_3$) | Token count grows step-by-step | Multi-stage text transformations, translation then code generation. |
-| **Parallel Fan-Out / Fan-In** | Low wall-clock latency ($\max(T_i) + T_{\text{synth}}$) | Higher input token cost due to parallel prompts | Multi-perspective document analysis (legal, technical, financial). |
-| **Conditional Routing** | Optimal ($T_{\text{route}} + T_{\text{selected}}$) | Cost-efficient; fires only target branch | Intent classification and domain-specific query dispatching. |
+| **Sequential** | $A \to B \to C \to D$ | Decouples complex logic into modular, easily testable steps. | Customer Support Ticket Processing (Extract $\to$ Classify $\to$ Draft $\to$ Format). |
+| **Parallel (Fan-Out / Fan-In)** | $A \to [B_1, B_2, B_3] \to C$ | Reduces latency from $\sum t_i$ to $\max(t_i)$ via `Promise.allSettled()`. | Multi-perspective document review (Financial + Sentiment + Risk). |
+| **Conditional (Branching)** | $A \to \text{if}(X) \text{ then } B \text{ else } C$ | Routes payloads to specialized sub-chains based on classifier output. | Customer inquiry triage (Billing vs Technical vs Delivery). |
+| **Loop (Self-Correction)** | $A \to B \to \text{Check} \to B \text{ (Repeat)}$ | Iteratively repairs malformed JSON or code output. | Code generation with automated linter feedback loops. |
+| **Map-Reduce** | $[C_1, C_2] \to \text{Map} \to \text{Reduce}$ | Bypasses context window limits by processing chunks in parallel. | Summarizing 500-page financial reports or legal contracts. |
 
 ---
 
-## 3. Intermediate Step Validation Guard Pipeline
-
-```mermaid
-flowchart TD
-    StepN[Execute Step N LLM Prompt] --> ExtractOutput["Extract Output Payload"]
-
-    ExtractOutput --> SchemaValidator{Validate Intermediate JSON Schema?}
-
-    SchemaValidator -- "Valid JSON Schema" --> StepN1["Proceed to Step N+1 Pipeline Node"]
-
-    SchemaValidator -- "Schema Validation Failed" --> SelfCorrection["Trigger Self-Correction Retry Loop<br/>Feed Validation Error back to Step N LLM"]
-
-    SelfCorrection --> RetryCheck{Retry Count < 3?}
-    RetryCheck -- "Yes" --> StepN
-    RetryCheck -- "Max Retries Exceeded" --> FallbackNode["Fallback Handler / Human-in-the-Loop Escalation"]
-
-    style StepN1 fill:#dcfce7,stroke:#15803d
-    style SelfCorrection fill:#fef3c7,stroke:#b45309
-    style FallbackNode fill:#fee2e2,stroke:#dc2626
-```
-
----
-
-## 4. Practical Implementation Showcase: Enterprise Workflow Orchestrator
+## 2. Chain Step & Sequential Orchestrator Engine (`Sections 2 & 3`)
 
 ```javascript
-class WorkflowChainEngine {
-  constructor(llmClient) {
-    this.client = llmClient;
+// Single Reusable Chain Step with Retries & Parser Guards
+class ChainStep {
+  constructor(name, promptFn, parseFn = null, retries = 2) {
+    this.name = name;
+    this.promptFn = promptFn;
+    this.parseFn = parseFn || (x => x);
+    this.retries = retries;
   }
 
-  /**
-   * Executes a sequential pipeline step with error validation
-   */
-  async executeSequential(initialContext, steps) {
-    let currentPayload = initialContext;
-    const executionHistory = [];
+  async execute(input, callLLM) {
+    const prompt = this.promptFn(input);
+    let lastError = null;
 
-    for (let idx = 0; idx < steps.length; idx++) {
-      const step = steps[idx];
-      console.log(`[WORKFLOW STEP ${idx + 1}/${steps.length}] Executing '${step.name}'...`);
-
-      const prompt = step.promptBuilder(currentPayload);
-      const startTime = Date.now();
-
-      const rawResponse = await this.client.generateCompletion(prompt);
-      const durationMs = Date.now() - startTime;
-
-      let validatedOutput = rawResponse;
-      if (step.validator) {
-        validatedOutput = step.validator(rawResponse);
+    for (let attempt = 1; attempt <= this.retries; attempt++) {
+      try {
+        const raw = await callLLM(prompt);
+        const parsed = this.parseFn(raw);
+        return { success: true, data: parsed, raw, attempts: attempt };
+      } catch (err) {
+        lastError = err;
       }
-
-      executionHistory.push({
-        stepName: step.name,
-        durationMs,
-        inputContext: currentPayload,
-        output: validatedOutput
-      });
-
-      currentPayload = validatedOutput;
     }
-
-    return { finalOutput: currentPayload, history: executionHistory };
-  }
-
-  /**
-   * Executes parallel fan-out requests and synthesizes results via fan-in step
-   */
-  async executeParallelFanOut(initialContext, parallelBranches, synthesisStep) {
-    console.log(`[WORKFLOW PARALLEL] Launching ${parallelBranches.length} fan-out branches...`);
-
-    const branchPromises = parallelBranches.map(async (branch) => {
-      const prompt = branch.promptBuilder(initialContext);
-      const res = await this.client.generateCompletion(prompt);
-      return { branchName: branch.name, result: res };
-    });
-
-    const branchResults = await Promise.all(branchPromises);
-    console.log(`[WORKFLOW PARALLEL] All ${branchResults.length} branches completed. Synthesizing...`);
-
-    const synthesisPrompt = synthesisStep.promptBuilder(branchResults);
-    const finalReport = await this.client.generateCompletion(synthesisPrompt);
-
-    return { branchResults, finalReport };
+    return { success: false, error: lastError.message, attempts: this.retries };
   }
 }
 
-// Simulated LLM API Client
-const mockLLMClient = {
-  generateCompletion: async (prompt) => {
-    if (prompt.includes("LEGAL")) return "LEGAL ANALYSIS: Compliance Verified. Zero liability found.";
-    if (prompt.includes("FINANCIAL")) return "FINANCIAL ANALYSIS: Q4 Revenue $1.2M (+15% YoY).";
-    if (prompt.includes("SYNTHESIZE")) return "EXECUTIVE BRIEF: Legal and Financial audits passed cleanly.";
-    return `Processed: ${prompt.substring(0, 40)}...`;
+// Sequential Pipeline Engine
+class SequentialChain {
+  constructor(steps) { this.steps = steps; }
+
+  async run(initialInput, callLLM) {
+    let currentInput = initialInput;
+    const results = [];
+
+    for (const step of this.steps) {
+      const result = await step.execute(currentInput, callLLM);
+      results.push({ step: step.name, ...result });
+
+      if (!result.success) {
+        return { success: false, failedAt: step.name, results };
+      }
+      currentInput = result.data; // Output becomes input to next step
+    }
+    return { success: true, finalOutput: currentInput, results };
   }
-};
+}
 
-// Execution Test
-const orchestrator = new WorkflowChainEngine(mockLLMClient);
+// 4-Step Sequential Support Ticket Chain
+const feedbackChain = new SequentialChain([
+  // Step 1: Extract Entities
+  new ChainStep("Extract", (input) => `Extract JSON: customer_name, product, issue, sentiment, urgency.\nFeedback: "${input}"\nJSON:`,
+    (raw) => JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim())),
+  
+  // Step 2: Classify & Priority Routing
+  new ChainStep("Classify", (data) => `Classify department and priority based on data: ${JSON.stringify(data)}. Return JSON: { department, priority, reasoning }`,
+    (raw) => JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim())),
+  
+  // Step 3: Draft Email Response
+  new ChainStep("Draft", (classified) => `Draft support email response given context: ${JSON.stringify(classified)}. Keep under 100 words.`,
+    (raw) => raw.trim()),
+  
+  // Step 4: Format Structured Ticket Payload
+  new ChainStep("Format", (draft) => `Format as structured JSON ticket: { ticket_id: "auto-generated", status: "open", response_draft: "${draft}", sla_hours: 24 }`,
+    (raw) => JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim()))
+]);
+```
 
-const parallelBranches = [
-  { name: "Legal Audit", promptBuilder: (ctx) => `LEGAL REVIEW FOR: ${ctx}` },
-  { name: "Financial Audit", promptBuilder: (ctx) => `FINANCIAL REVIEW FOR: ${ctx}` }
-];
+---
 
-const synthesisStep = {
-  name: "Executive Synthesizer",
-  promptBuilder: (branchOutputs) =>
-    `SYNTHESIZE THE FOLLOWING BRANCH REPORTS:\n${JSON.stringify(branchOutputs, null, 2)}`
-};
+## 3. Parallel Fan-Out & Conditional Branching (`Sections 4 & 5`)
 
-orchestrator
-  .executeParallelFanOut("Enterprise Acquisition Pitch Deck V2", parallelBranches, synthesisStep)
-  .then((res) => console.log("\nWorkflow Orchestration Result:\n", JSON.stringify(res, null, 2)));
+```javascript
+// Parallel Fan-Out / Fan-In Chain Execution
+class ParallelChain {
+  constructor(steps, mergeFn) {
+    this.steps = steps;
+    this.mergeFn = mergeFn;
+  }
+
+  async run(input, callLLM) {
+    const promises = this.steps.map(step => step.execute(input, callLLM));
+    const results = await Promise.allSettled(promises);
+
+    const outputs = results.map((r, i) => ({
+      step: this.steps[i].name,
+      ...(r.status === "fulfilled" ? r.value : { success: false, error: r.reason }),
+    }));
+
+    const successOutputs = outputs.filter(o => o.success).map(o => o.data);
+    return { outputs, merged: this.mergeFn(successOutputs) };
+  }
+}
+
+// Conditional Routing Engine
+class ConditionalChain {
+  constructor(classifierStep, branches, defaultBranch) {
+    this.classifierStep = classifierStep;
+    this.branches = branches;
+    this.defaultBranch = defaultBranch;
+  }
+
+  async run(input, callLLM) {
+    const classification = await this.classifierStep.execute(input, callLLM);
+    if (!classification.success) return { success: false, error: "Classification failed" };
+
+    const category = classification.data.toLowerCase().trim();
+    const branch = this.branches[category] || this.defaultBranch;
+    return branch.run(input, callLLM);
+  }
+}
+```
+
+---
+
+## 4. Fault Tolerance, Exponential Backoff, & JSON Repair (`Section 6`)
+
+Production pipelines require automated recovery strategies to fix transient API timeouts and common LLM output syntax errors.
+
+```javascript
+// Exponential Backoff Retry Helper
+async function retryWithBackoff(fn, maxRetries = 3, baseDelay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i === maxRetries - 1) throw err;
+      const delay = baseDelay * Math.pow(2, i);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+}
+
+// Self-Healing JSON Repair Engine
+function repairJSON(text) {
+  let cleaned = text
+    .replace(/```json?\n?/g, "")
+    .replace(/```/g, "")
+    .trim();
+
+  // Fix trailing commas in arrays/objects (common LLM error)
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, "$1");
+  // Fix single quotes to valid double quotes
+  cleaned = cleaned.replace(/'/g, '"');
+
+  // Extract JSON block if surrounded by conversational filler
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) cleaned = jsonMatch[0];
+
+  return JSON.parse(cleaned);
+}
+```
+
+---
+
+## 5. Map-Reduce Processing for Massive Documents (`Section 8`)
+
+```javascript
+// Map-Reduce Pipeline for Summarizing Massive Texts Beyond Context Limits
+async function mapReduceChain(chunks, mapPromptFn, reducePromptFn, callLLM) {
+  // 1. Map Phase: Process each document chunk independently in parallel
+  const mapResults = await Promise.all(
+    chunks.map(async (chunk) => {
+      const prompt = mapPromptFn(chunk);
+      return await callLLM(prompt);
+    })
+  );
+
+  // 2. Reduce Phase: Combine intermediate map outputs into final executive summary
+  const combinedSummaries = mapResults.join("\n\n---\n\n");
+  const reducePrompt = reducePromptFn(combinedSummaries);
+  return await callLLM(reducePrompt);
+}
 ```
 
 ---
 
 ## Key Production Takeaways
 
-1. **Decompose Complex Prompts into Focused Steps**: Single prompts attempting to do 5 things simultaneously fail frequently. Splitting tasks into a 3-step prompt chain increases reliability by up to $80\%$.
-2. **Use Parallel Fan-Out to Reduce Latency**: When multi-perspective analysis is required (e.g. security, performance, and legal checks), run tasks in parallel using `Promise.all()` to prevent additive latency spikes.
-3. **Validate Intermediate Outputs Between Steps**: Insert JSON schema validators between chain steps to catch malformed intermediate data early before calling downstream prompts.
-4. **Isolate Scope to Prevent Context Contamination**: Instead of passing the entire raw conversation transcript down every step, extract and pass only the relevant step payload ($N-1$) to keep token usage low.
-
+1. **Break Complex Tasks into 3-5 Steps**: Single-prompt monoliths fail randomly. Modular sequential chains isolate errors and produce reliable outputs.
+2. **Execute Independent Steps in Parallel**: Use `ParallelChain` with `Promise.allSettled()` for independent analysis tasks to reduce user-perceived latency.
+3. **Route Workflows Dynamically**: Implement `ConditionalChain` classifiers at the head of pipelines to route inquiries to specialized downstream prompt handlers.
+4. **Implement Automated JSON Repair**: Always pass LLM JSON outputs through a repair sanitizer (`repairJSON`) to fix trailing commas and markdown code blocks.
+5. **Use Map-Reduce for Large Documents**: When document volume exceeds context window limits, split text into chunks, map summaries in parallel, and reduce them into a final executive brief.
